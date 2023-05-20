@@ -50,15 +50,13 @@ export default (appInfo: EggAppConfig) => {
     changesStreamRegistry: 'https://replicate.npmjs.com',
     // handle _changes request mode, default is 'streaming', please set it to 'json' when on cnpmcore registry
     changesStreamRegistryMode: 'streaming',
-    registry: 'http://localhost:7001',
+    registry: 'https://npm.zzfzzf.com',
     // https://docs.npmjs.com/cli/v6/using-npm/config#always-auth npm <= 6
     // if `alwaysAuth=true`, all api request required access token
     alwaysAuth: false,
     // white scope list
     allowScopes: [
-      '@cnpm',
-      '@cnpmcore',
-      '@example',
+      '@oc'
     ],
     // allow publish non-scope package, disable by default
     allowPublishNonScopePackage: false,
@@ -67,7 +65,7 @@ export default (appInfo: EggAppConfig) => {
     // default system admins
     admins: {
       // name: email
-      cnpmcore_admin: 'admin@cnpmjs.org',
+      cnpmcore_admin: 'npm@ooxo.cc',
     },
     // use webauthn for login, https://webauthn.guide/
     // only support platform authenticators, browser support: https://webauthn.me/browser-support
@@ -107,9 +105,9 @@ export default (appInfo: EggAppConfig) => {
 
   config.redis = {
     client: {
-      port: 6379,
-      host: '127.0.0.1',
-      password: '',
+      port: process.env.REDIS_PORT as any as number || 6379,
+      host: process.env.REDIS_HOST,
+      password: process.env.REDIS_PASSWORD,
       db: 0,
     },
   };
