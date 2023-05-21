@@ -51,7 +51,7 @@
     "tsc": "npm run clean && tsc -p ./tsconfig.json",
     "tsc:prod": "npm run clean && tsc -p ./tsconfig.prod.json",
     "prepublishOnly": "npm run tsc:prod",
-    "start": "eggctl start --daemon && touch egg.status",
+    "start": "eggctl start && touch egg.status",
     "stop": "rm -f egg.status && sleep 15 && eggctl stop"
   },
   "repository": {

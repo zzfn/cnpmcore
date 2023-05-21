@@ -1,4 +1,3 @@
-import assert from 'assert';
 import { join } from 'path';
 import { EggAppConfig, PowerPartial } from 'egg';
 import OSSClient from 'oss-cnpm';
@@ -94,20 +93,20 @@ export default (appInfo: EggAppConfig) => {
 
   config.orm = {
     client: 'mysql',
-    database: process.env.MYSQL_DATABASE || 'cnpmcore',
-    host: process.env.MYSQL_HOST || '127.0.0.1',
+    database: 'npm',
+    host: 'rm-uf6b5g31sq0001m6aro.mysql.rds.aliyuncs.com',
     port: process.env.MYSQL_PORT || 3306,
-    user: process.env.MYSQL_USER || 'root',
-    password: process.env.MYSQL_PASSWORD,
+    user: 'npm',
+    password: 'npm123!!!',
     charset: 'utf8mb4',
     logger: {},
   };
 
   config.redis = {
     client: {
-      port: process.env.REDIS_PORT as any as number || 6379,
-      host: process.env.REDIS_HOST,
-      password: process.env.REDIS_PASSWORD,
+      port: 30013,
+      host: '192.168.100.105',
+      password: 'QEU7uqx',
       db: 0,
     },
   };
@@ -132,22 +131,22 @@ export default (appInfo: EggAppConfig) => {
   };
   /* c8 ignore next 17 */
   // enable oss nfs store by env values
-  if (process.env.CNPMCORE_NFS_TYPE === 'oss') {
-    assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
-    assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
-    assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
-    assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
+  // if (process.env.CNPMCORE_NFS_TYPE === 'oss') {
+    // assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
+    // assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
+    // assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
+    // assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
     config.nfs.client = new OSSClient({
-      cdnBaseUrl: process.env.CNPMCORE_NFS_OSS_CDN,
-      endpoint: process.env.CNPMCORE_NFS_OSS_ENDPOINT,
-      bucket: process.env.CNPMCORE_NFS_OSS_BUCKET,
-      accessKeyId: process.env.CNPMCORE_NFS_OSS_ID,
-      accessKeySecret: process.env.CNPMCORE_NFS_OSS_SECRET,
+      cdnBaseUrl: 'https://npm-mirror.oss-cn-shanghai.aliyuncs.com',
+      endpoint: 'https://oss-cn-shanghai.aliyuncs.com',
+      bucket: 'npm-mirror',
+      accessKeyId: 'LTAI5t6vT7e5bRFCB8sNzfrq',
+      accessKeySecret: '769FWmliPsHBgutbC8moRZUODPT4d2',
       defaultHeaders: {
         'Cache-Control': 'max-age=0, s-maxage=60',
       },
     });
-  }
+  // }
 
   config.logger = {
     enablePerformanceTimer: true,
