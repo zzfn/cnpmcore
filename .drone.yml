@@ -1,0 +1,48 @@
+kind: pipeline
+type: docker
+name: ci/cd
+clone:
+  disable: true
+steps:
+  - name: clone
+    image: alpine/git
+    environment:
+      SSH_KEY:
+        from_secret: ssh_key
+    commands:
+      - mkdir $HOME/.ssh
+      - echo -n "$SSH_KEY" > $HOME/.ssh/id_rsa
+      - chmod 600 /root/.ssh/id_rsa
+
+      - touch /root/.ssh/known_hosts
+      - chmod 600 /root/.ssh/known_hosts
+      - ssh-keyscan -H github.com > /etc/ssh/ssh_known_hosts 2> /dev/null
+
+      - git clone $DRONE_GIT_SSH_URL .
+      - git checkout $DRONE_COMMIT
+  - name: build_docker
+    image: plugins/docker
+    pull: if-not-exists
+    settings:
+      registry: hub.ccw.es
+      username:
+        from_secret: nexus_docker_username
+      password:
+        from_secret: nexus_docker_password
+      repo: hub.ccw.es/home/cnpmcore
+      tags: ${DRONE_COMMIT=latest}${DRONE_BUILD_NUMBER}
+  - name: ssh
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: k8s_host
+      username:
+        from_secret: k8s_username
+      key:
+        from_secret: k8s_key
+      port: 22
+      command_timeout: 2m
+      script:
+        - echo ${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
+        - kubectl apply -f https://git.ccw.es/ccw/k3s/raw/branch/master/cnpmcore.yaml
+        - kubectl set image deployment/cnpmcore cnpmcore=hub.ccw.es/home/cnpmcore:${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
