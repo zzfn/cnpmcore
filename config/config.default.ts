@@ -35,9 +35,7 @@ export const cnpmcoreConfig: CnpmcoreConfig = {
   registry: process.env.CNPMCORE_CONFIG_REGISTRY || 'http://localhost:7001',
   alwaysAuth: false,
   allowScopes: [
-    '@cnpm',
-    '@cnpmcore',
-    '@example',
+    '@oc',
   ],
   allowPublishNonScopePackage: false,
   allowPublicRegistration: true,
