@@ -44,5 +44,5 @@ steps:
       command_timeout: 2m
       script:
         - echo ${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
-        - kubectl apply -f https://git.ccw.es/ccw/k3s/raw/branch/master/cnpmcore.yaml
+        - kubectl apply -f https://git.ccw.es/ccw/yaml/raw/branch/master/cnpmcore.yaml
         - kubectl set image deployment/cnpmcore cnpmcore=hub.ccw.es/home/cnpmcore:${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
