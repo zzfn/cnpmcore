@@ -1,6 +1,7 @@
 import { Type, Static } from '@sinclair/typebox';
 import { RegistryType } from '../common/enum/Registry';
 import semver from 'semver';
+import npa from 'npm-package-arg';
 import { HookType } from '../common/enum/Hook';
 import binaryConfig from '../../config/binaries';
 
@@ -53,6 +54,16 @@ export const Version = Type.String({
   maxLength: 256,
 });
 
+export const VersionStringArray = Type.String({
+  format: 'semver-version-array',
+  transform: [ 'trim' ],
+});
+
+export const Spec = Type.String({
+  format: 'semver-spec',
+  minLength: 1,
+});
+
 export const Description = Type.String({ maxLength: 10240, transform: [ 'trim' ] });
 
 export const TagRule = Type.Object({
@@ -79,6 +90,7 @@ export const SyncPackageTaskRule = Type.Object({
     maxLength: 1024,
   }),
   skipDependencies: Type.Boolean(),
+  specificVersions: Type.Optional(VersionStringArray),
   syncDownloadData: Type.Boolean(),
   // force sync immediately, only allow by admin
   force: Type.Boolean(),
@@ -125,10 +137,37 @@ export function patchAjv(ajv: any) {
       return !semver.validRange(tag);
     },
   });
+  ajv.addFormat('semver-spec', {
+    type: 'string',
+    validate: (spec: string) => {
+      try {
+        // do not support alias
+        // exp: https://unpkg.com/good@npm:cnpmcore@3.17.1/dist/app.js
+        return [ 'tag', 'version', 'range' ].includes(npa(spec).type);
+      } catch (e) {
+        return false;
+      }
+    },
+  });
   ajv.addFormat('binary-name', {
     type: 'string',
     validate: (binaryName: string) => {
       return !!binaryConfig[binaryName];
+    },
+  });
+  ajv.addFormat('semver-version-array', {
+    type: 'string',
+    validate: (versionStringList: string) => {
+      let versionList;
+      try {
+        versionList = JSON.parse(versionStringList);
+      } catch (error) {
+        return false;
+      }
+      if (versionList instanceof Array) {
+        return versionList.every(version => !!semver.valid(version));
+      }
+      return false;
     },
   });
 }

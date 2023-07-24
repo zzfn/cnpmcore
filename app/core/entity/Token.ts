@@ -13,7 +13,8 @@ interface BaseTokenData extends EntityData {
   cidrWhitelist?: string[];
   userId: string;
   isReadonly?: boolean;
-  type?: TokenType;
+  type?: TokenType | string;
+  lastUsedAt?: Date;
 }
 
 interface ClassicTokenData extends BaseTokenData{
@@ -30,7 +31,7 @@ interface GranularTokenData extends BaseTokenData {
 
 type TokenData = ClassicTokenData | GranularTokenData;
 
-export function isGranularToken(data: TokenData): data is GranularTokenData {
+export function isGranularToken(data: TokenData | Token): data is GranularTokenData {
   return data.type === TokenType.granular;
 }
 
@@ -48,6 +49,7 @@ export class Token extends Entity {
   readonly allowedScopes?: string[];
   readonly expiredAt?: Date;
   readonly expires?: number;
+  lastUsedAt: Date | null;
   allowedPackages?: string[];
   token?: string;
 
@@ -59,7 +61,8 @@ export class Token extends Entity {
     this.tokenKey = data.tokenKey;
     this.cidrWhitelist = data.cidrWhitelist || [];
     this.isReadonly = data.isReadonly || false;
-    this.type = data.type || TokenType.classic;
+    this.type = (data.type as TokenType) || TokenType.classic;
+    this.lastUsedAt = data.lastUsedAt || null;
 
     if (isGranularToken(data)) {
       this.name = data.name;
@@ -67,6 +70,7 @@ export class Token extends Entity {
       this.allowedScopes = data.allowedScopes;
       this.expiredAt = data.expiredAt;
       this.allowedPackages = data.allowedPackages;
+      this.isAutomation = false;
     } else {
       this.isAutomation = data.isAutomation || false;
     }

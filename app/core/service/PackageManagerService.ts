@@ -1,12 +1,13 @@
-import { stat } from 'fs/promises';
+import { stat, readFile } from 'node:fs/promises';
 import {
   AccessLevel,
   SingletonProto,
   EventBus,
   Inject,
 } from '@eggjs/tegg';
-import { ForbiddenError } from 'egg-errors';
+import { ForbiddenError, NotFoundError } from 'egg-errors';
 import { RequireAtLeastOne } from 'type-fest';
+import npa from 'npm-package-arg';
 import semver from 'semver';
 import {
   calculateIntegrity,
@@ -17,8 +18,6 @@ import {
   hasShrinkWrapInTgz,
 } from '../../common/PackageUtil';
 import { AbstractService } from '../../common/AbstractService';
-import { BugVersionStore } from '../../common/adapter/BugVersionStore';
-import { BUG_VERSIONS, LATEST_TAG } from '../../common/constants';
 import { AbbreviatedPackageJSONType, AbbreviatedPackageManifestType, PackageJSONType, PackageManifestType, PackageRepository } from '../../repository/PackageRepository';
 import { PackageVersionBlockRepository } from '../../repository/PackageVersionBlockRepository';
 import { PackageVersionDownloadRepository } from '../../repository/PackageVersionDownloadRepository';
@@ -46,6 +45,7 @@ import { BugVersionService } from './BugVersionService';
 import { BugVersion } from '../entity/BugVersion';
 import { RegistryManagerService } from './RegistryManagerService';
 import { Registry } from '../entity/Registry';
+import { PackageVersionService } from './PackageVersionService';
 
 export interface PublishPackageCmd {
   // maintainer: Maintainer;
@@ -91,11 +91,11 @@ export class PackageManagerService extends AbstractService {
   @Inject()
   private readonly bugVersionService: BugVersionService;
   @Inject()
-  private readonly bugVersionStore: BugVersionStore;
-  @Inject()
   private readonly distRepository: DistRepository;
   @Inject()
   private readonly registryManagerService: RegistryManagerService;
+  @Inject()
+  private readonly packageVersionService: PackageVersionService;
 
   private static downloadCounters = {};
 
@@ -155,17 +155,17 @@ export class PackageManagerService extends AbstractService {
       cmd.packageJson._hasShrinkwrap = await hasShrinkWrapInTgz(cmd.dist.content || cmd.dist.localFile!);
     }
 
+    // set _npmUser field to cmd.packageJson
+    cmd.packageJson._npmUser = {
+      // clean user scope prefix
+      name: publisher.displayName,
+      email: publisher.email,
+    };
+
     // add _registry_name field to cmd.packageJson
-    if (!cmd.packageJson._source_registry_name) {
-      let registry: Registry | null;
-      if (cmd.registryId) {
-        registry = await this.registryManagerService.findByRegistryId(cmd.registryId);
-      } else {
-        registry = await this.registryManagerService.ensureDefaultRegistry();
-      }
-      if (registry) {
-        cmd.packageJson._source_registry_name = registry.name;
-      }
+    const registry = await this.getSourceRegistry(pkg);
+    if (registry) {
+      cmd.packageJson._source_registry_name = registry.name;
     }
 
     // https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-version-object
@@ -277,6 +277,15 @@ export class PackageManagerService extends AbstractService {
     return pkgVersion;
   }
 
+  async blockPackageByFullname(name: string, reason: string) {
+    const [ scope, pkgName ] = getScopeAndName(name);
+    const pkg = await this.packageRepository.findPackage(scope, pkgName);
+    if (!pkg) {
+      throw new NotFoundError(`Package name(${name}) not found`);
+    }
+    return await this.blockPackage(pkg, reason);
+  }
+
   async blockPackage(pkg: Package, reason: string) {
     let block = await this.packageVersionBlockRepository.findPackageBlock(pkg.packageId);
     if (block) {
@@ -306,6 +315,15 @@ export class PackageManagerService extends AbstractService {
     return block;
   }
 
+  async unblockPackageByFullname(name: string) {
+    const [ scope, pkgName ] = getScopeAndName(name);
+    const pkg = await this.packageRepository.findPackage(scope, pkgName);
+    if (!pkg) {
+      throw new NotFoundError(`Package name(${name}) not found`);
+    }
+    return await this.unblockPackage(pkg);
+  }
+
   async unblockPackage(pkg: Package) {
     const block = await this.packageVersionBlockRepository.findPackageVersionBlock(pkg.packageId, '*');
     if (block) {
@@ -327,9 +345,9 @@ export class PackageManagerService extends AbstractService {
     }
   }
 
-  async replacePackageMaintainers(pkg: Package, maintainers: User[]) {
+  async replacePackageMaintainersAndDist(pkg: Package, maintainers: User[]) {
     await this.packageRepository.replacePackageMaintainers(pkg.packageId, maintainers.map(m => m.userId));
-    await this._refreshPackageManifestRootAttributeOnlyToDists(pkg, 'maintainers');
+    await this.refreshPackageMaintainersToDists(pkg);
     this.eventBus.emit(PACKAGE_MAINTAINER_CHANGED, pkg.fullname, maintainers);
   }
 
@@ -342,14 +360,12 @@ export class PackageManagerService extends AbstractService {
       }
     }
     if (hasNewRecord) {
-      await this._refreshPackageManifestRootAttributeOnlyToDists(pkg, 'maintainers');
       this.eventBus.emit(PACKAGE_MAINTAINER_CHANGED, pkg.fullname, maintainers);
     }
   }
 
   async removePackageMaintainer(pkg: Package, maintainer: User) {
     await this.packageRepository.removePackageMaintainer(pkg.packageId, maintainer.userId);
-    await this._refreshPackageManifestRootAttributeOnlyToDists(pkg, 'maintainers');
     this.eventBus.emit(PACKAGE_MAINTAINER_REMOVED, pkg.fullname, maintainer.name);
   }
 
@@ -369,7 +385,7 @@ export class PackageManagerService extends AbstractService {
     return await this._listPackageFullOrAbbreviatedManifests(scope, name, false, isSync);
   }
 
-  async showPackageVersionByVersionOrTag(scope: string, name: string, versionOrTag: string): Promise<{
+  async showPackageVersionByVersionOrTag(scope: string, name: string, spec: string): Promise<{
     blockReason?: string,
     pkg?: Package,
     packageVersion?: PackageVersion | null,
@@ -380,40 +396,27 @@ export class PackageManagerService extends AbstractService {
     if (block) {
       return { blockReason: block.reason, pkg };
     }
-    let version = versionOrTag;
-    if (!semver.valid(versionOrTag)) {
-      // invalid version, versionOrTag is a tag
-      const packageTag = await this.packageRepository.findPackageTag(pkg.packageId, versionOrTag);
-      if (packageTag) {
-        version = packageTag.version;
-      }
+    const fullname = getFullname(scope, name);
+    const result = npa(`${fullname}@${spec}`);
+    const version = await this.packageVersionService.getVersion(result);
+    if (!version) {
+      return {};
     }
     const packageVersion = await this.packageRepository.findPackageVersion(pkg.packageId, version);
     return { packageVersion, pkg };
   }
 
-  async showPackageVersionManifest(scope: string, name: string, versionOrTag: string, isSync = false) {
-    let manifest;
-    const { blockReason, packageVersion, pkg } = await this.showPackageVersionByVersionOrTag(scope, name, versionOrTag);
-    if (blockReason) {
-      return {
-        blockReason,
-        manifest,
-        pkg,
-      };
+  async showPackageVersionManifest(scope: string, name: string, spec: string, isSync = false, isFullManifests = false) {
+    const pkg = await this.packageRepository.findPackage(scope, name);
+    if (!pkg) return {};
+    const block = await this.packageVersionBlockRepository.findPackageBlock(pkg.packageId);
+    if (block) {
+      return { blockReason: block.reason, pkg };
     }
-    if (!packageVersion) return { manifest: null, blockReason, pkg };
-    manifest = await this.distRepository.findPackageVersionManifest(packageVersion.packageId, packageVersion.version);
-    let bugVersion: BugVersion | undefined;
-    // sync mode response no bug version fixed
-    if (!isSync) {
-      bugVersion = await this.getBugVersion();
-    }
-    if (bugVersion) {
-      const fullname = getFullname(scope, name);
-      manifest = await this.bugVersionService.fixPackageBugVersion(bugVersion, fullname, manifest);
-    }
-    return { manifest, blockReason, pkg };
+    const fullname = getFullname(scope, name);
+    const result = npa(`${fullname}@${spec}`);
+    const manifest = await this.packageVersionService.readManifest(pkg.packageId, result, isFullManifests, !isSync);
+    return { manifest, blockReason: null, pkg };
   }
 
   async downloadPackageVersionTar(packageVersion: PackageVersion) {
@@ -490,6 +493,25 @@ export class PackageManagerService extends AbstractService {
   public async savePackageVersionManifest(pkgVersion: PackageVersion, mergeManifest: object, mergeAbbreviated: object) {
     await this._mergeManifestDist(pkgVersion.manifestDist, mergeManifest);
     await this._mergeManifestDist(pkgVersion.abbreviatedDist, mergeAbbreviated);
+  }
+
+  /**
+   * save package version readme
+   */
+  public async savePackageVersionReadme(pkgVersion: PackageVersion, readmeFile: string) {
+    await this.distRepository.saveDist(pkgVersion.readmeDist, readmeFile);
+    this.logger.info('[PackageManagerService.savePackageVersionReadme] save packageVersionId:%s readme:%s to dist:%s',
+      pkgVersion.packageVersionId, readmeFile, pkgVersion.readmeDist.distId);
+  }
+
+  public async savePackageReadme(pkg: Package, readmeFile: string) {
+    if (!pkg.manifestsDist) return;
+    const fullManifests = await this.distRepository.readDistBytesToJSON<PackageManifestType>(pkg.manifestsDist);
+    if (!fullManifests) return;
+    fullManifests.readme = await readFile(readmeFile, 'utf-8');
+    await this._updatePackageManifestsToDists(pkg, fullManifests, null);
+    this.logger.info('[PackageManagerService.savePackageReadme] save packageId:%s readme, size: %s',
+      pkg.packageId, fullManifests.readme.length);
   }
 
   private async _removePackageVersionAndDist(pkgVersion: PackageVersion) {
@@ -644,22 +666,14 @@ export class PackageManagerService extends AbstractService {
     await this._updatePackageManifestsToDists(pkg, fullManifests, abbreviatedManifests);
   }
 
-  async getBugVersion(): Promise<BugVersion | undefined> {
-    // TODO performance problem, cache bugVersion and update with schedule
-    const pkg = await this.packageRepository.findPackage('', BUG_VERSIONS);
-    if (!pkg) return;
-    /* c8 ignore next 10 */
-    const tag = await this.packageRepository.findPackageTag(pkg!.packageId, LATEST_TAG);
-    if (!tag) return;
-    let bugVersion = this.bugVersionStore.getBugVersion(tag!.version);
-    if (!bugVersion) {
-      const packageVersionJson = (await this.distRepository.findPackageVersionManifest(pkg!.packageId, tag!.version)) as PackageJSONType;
-      if (!packageVersionJson) return;
-      const data = packageVersionJson.config?.['bug-versions'];
-      bugVersion = new BugVersion(data);
-      this.bugVersionStore.setBugVersion(bugVersion, tag!.version);
+  async getSourceRegistry(pkg: Package): Promise<Registry | null> {
+    let registry: Registry | null;
+    if (pkg.registryId) {
+      registry = await this.registryManagerService.findByRegistryId(pkg.registryId);
+    } else {
+      registry = await this.registryManagerService.ensureDefaultRegistry();
     }
-    return bugVersion;
+    return registry;
   }
 
   private async _listPackageDistTags(pkg: Package) {
@@ -793,6 +807,7 @@ export class PackageManagerService extends AbstractService {
     let blockReason = '';
     const pkg = await this.packageRepository.findPackage(scope, name);
     if (!pkg) return { etag, data: null, blockReason };
+    const registry = await this.getSourceRegistry(pkg);
 
     const block = await this.packageVersionBlockRepository.findPackageBlock(pkg.packageId);
     if (block) {
@@ -802,7 +817,7 @@ export class PackageManagerService extends AbstractService {
     let bugVersion: BugVersion | undefined;
     // sync mode response no bug version fixed
     if (!isSync) {
-      bugVersion = await this.getBugVersion();
+      bugVersion = await this.bugVersionService.getBugVersion();
     }
     const fullname = getFullname(scope, name);
 
@@ -814,6 +829,11 @@ export class PackageManagerService extends AbstractService {
       if (bugVersion) {
         await this.bugVersionService.fixPackageBugVersions(bugVersion, fullname, data.versions);
       }
+      // set _source_registry_name in full manifestDist
+      if (registry) {
+        data._source_registry_name = registry?.name;
+      }
+
       const distBytes = Buffer.from(JSON.stringify(data));
       const distIntegrity = await calculateIntegrity(distBytes);
       etag = `"${distIntegrity.shasum}"`;
@@ -854,8 +874,9 @@ export class PackageManagerService extends AbstractService {
 
     const distTags = await this._listPackageDistTags(pkg);
     const maintainers = await this._listPackageMaintainers(pkg);
+    const registry = await this.getSourceRegistry(pkg);
     // https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#full-metadata-format
-    const data:PackageManifestType = {
+    const data: PackageManifestType = {
       _id: `${pkg.fullname}`,
       _rev: `${pkg.id}-${pkg.packageId}`,
       'dist-tags': distTags,
@@ -888,6 +909,7 @@ export class PackageManagerService extends AbstractService {
       // as given in package.json, for the latest version
       repository: undefined,
       // users: an object whose keys are the npm user names of people who have starred this package
+      _source_registry_name: registry?.name,
     };
 
     let latestTagVersion = '';

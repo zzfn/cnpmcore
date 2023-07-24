@@ -1,14 +1,17 @@
-FROM node:18-alpine
+FROM node:18
 
-WORKDIR /app
+# Create app directory
+WORKDIR /usr/src/app
 
-COPY . ./
+# Install app dependencies
+COPY . .
 
-RUN npm i
+RUN npm install -g npminstall --registry=https://registry.npmmirror.com \
+  && npminstall -c \
+  && npm run tsc
 
-RUN npm run tsc
+ENV NODE_ENV=production \
+  EGG_SERVER_ENV=prod
 
 EXPOSE 7001
-
-CMD ["npm","run","start"]
-
+CMD ["npm", "run", "start:foreground"]

@@ -1,113 +1,86 @@
+import assert from 'assert';
+import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { EggAppConfig, PowerPartial } from 'egg';
 import OSSClient from 'oss-cnpm';
 import { patchAjv } from '../app/port/typebox';
-import { SyncDeleteMode, SyncMode } from '../app/common/constants';
+import { ChangesStreamMode, SyncDeleteMode, SyncMode } from '../app/common/constants';
+import { CnpmcoreConfig } from '../app/port/config';
+
+export const cnpmcoreConfig: CnpmcoreConfig = {
+  name: 'cnpm',
+  hookEnable: false,
+  hooksLimit: 20,
+  sourceRegistry: 'https://registry.npmjs.org',
+  sourceRegistryIsCNpm: false,
+  syncUpstreamFirst: false,
+  sourceRegistrySyncTimeout: 180000,
+  taskQueueHighWaterSize: 100,
+  syncMode: SyncMode.none,
+  syncDeleteMode: SyncDeleteMode.delete,
+  syncPackageWorkerMaxConcurrentTasks: 10,
+  triggerHookWorkerMaxConcurrentTasks: 10,
+  createTriggerHookWorkerMaxConcurrentTasks: 10,
+  syncPackageBlockList: [],
+  enableCheckRecentlyUpdated: true,
+  enableSyncBinary: false,
+  syncBinaryFromAPISource: '',
+  enableSyncDownloadData: false,
+  syncDownloadDataSourceRegistry: '',
+  syncDownloadDataMaxDate: '',
+  enableChangesStream: false,
+  checkChangesStreamInterval: 500,
+  changesStreamRegistry: 'https://replicate.npmjs.com',
+  changesStreamRegistryMode: ChangesStreamMode.streaming,
+  registry: process.env.CNPMCORE_CONFIG_REGISTRY || 'http://localhost:7001',
+  alwaysAuth: false,
+  allowScopes: [
+    '@oc',
+  ],
+  allowPublishNonScopePackage: false,
+  allowPublicRegistration: true,
+  admins: {
+    cnpmcore_admin: 'admin@cnpmjs.org',
+  },
+  enableWebAuthn: !!process.env.CNPMCORE_CONFIG_ENABLE_WEB_AUTHN,
+  enableCDN: false,
+  cdnCacheControlHeader: 'public, max-age=300',
+  cdnVaryHeader: 'Accept, Accept-Encoding',
+  enableStoreFullPackageVersionManifestsToDatabase: false,
+  enableNpmClientAndVersionCheck: true,
+  syncNotFound: false,
+  redirectNotFound: true,
+  enableUnpkg: true,
+  strictSyncSpecivicVersion: false,
+  strictValidateTarballPkg: false,
+};
 
 export default (appInfo: EggAppConfig) => {
   const config = {} as PowerPartial<EggAppConfig>;
 
-  config.cnpmcore = {
-    name: 'cnpm',
-    hooksLimit: 20,
-    sourceRegistry: 'https://registry.npmjs.org',
-    // upstream registry is base on `cnpmcore` or not
-    // if your upstream is official npm registry, please turn it off
-    sourceRegistryIsCNpm: false,
-    syncUpstreamFirst: false,
-    // 3 mins
-    sourceRegistrySyncTimeout: 180000,
-    taskQueueHighWaterSize: 100,
-    // sync mode
-    //  - none: don't sync npm package
-    //  - admin: don't sync npm package,only admin can create sync task by sync contorller.
-    //  - all: sync all npm packages
-    //  - exist: only sync exist packages, effected when `enableCheckRecentlyUpdated` or `enableChangesStream` is enabled
-    syncMode: SyncMode.none,
-    syncDeleteMode: SyncDeleteMode.delete,
-    hookEnable: false,
-    syncPackageWorkerMaxConcurrentTasks: 10,
-    triggerHookWorkerMaxConcurrentTasks: 10,
-    createTriggerHookWorkerMaxConcurrentTasks: 10,
-    // stop syncing these packages in future
-    syncPackageBlockList: [],
-    // check recently from https://www.npmjs.com/browse/updated, if use set changesStreamRegistry to cnpmcore,
-    // maybe you should disable it
-    enableCheckRecentlyUpdated: true,
-    // mirror binary, default is false
-    enableSyncBinary: false,
-    // cnpmcore api: https://r.cnpmjs.org/-/binary
-    syncBinaryFromAPISource: '',
-    // enable sync downloads data from source registry https://github.com/cnpm/cnpmcore/issues/108
-    // all three parameters must be configured at the same time to take effect
-    enableSyncDownloadData: false,
-    syncDownloadDataSourceRegistry: '',
-    syncDownloadDataMaxDate: '', // should be YYYY-MM-DD format
-    // https://github.com/npm/registry-follower-tutorial
-    enableChangesStream: false,
-    checkChangesStreamInterval: 500,
-    changesStreamRegistry: 'https://replicate.npmjs.com',
-    // handle _changes request mode, default is 'streaming', please set it to 'json' when on cnpmcore registry
-    changesStreamRegistryMode: 'streaming',
-    registry: 'https://npm.zzfzzf.com',
-    // https://docs.npmjs.com/cli/v6/using-npm/config#always-auth npm <= 6
-    // if `alwaysAuth=true`, all api request required access token
-    alwaysAuth: false,
-    // white scope list
-    allowScopes: [
-      '@oc'
-    ],
-    // allow publish non-scope package, disable by default
-    allowPublishNonScopePackage: false,
-    // Public registration is allowed, otherwise only admins can login
-    allowPublicRegistration: true,
-    // default system admins
-    admins: {
-      // name: email
-      cnpmcore_admin: 'npm@ooxo.cc',
-    },
-    // use webauthn for login, https://webauthn.guide/
-    // only support platform authenticators, browser support: https://webauthn.me/browser-support
-    enableWebAuthn: false,
-    // http response cache control header
-    enableCDN: false,
-    // if you are using CDN, can override it
-    // it meaning cache 300s on CDN server and client side.
-    cdnCacheControlHeader: 'public, max-age=300',
-    // if you are using CDN, can set it to 'Accept, Accept-Encoding'
-    cdnVaryHeader: 'Accept, Accept-Encoding',
-    // store full package version manifests data to database table(package_version_manifests), default is false
-    enableStoreFullPackageVersionManifestsToDatabase: false,
-    // only support npm as client and npm >= 7.0.0 allow publish action
-    enableNpmClientAndVersionCheck: true,
-    // sync when package not found, only effect when syncMode = all/exist
-    syncNotFound: false,
-    // redirect to source registry when package not found
-    redirectNotFound: true,
-    // enable unpkg features, https://github.com/cnpm/cnpmcore/issues/452
-    enableUnpkg: true,
-  };
+  config.keys = process.env.CNPMCORE_EGG_KEYS || randomUUID();
+  config.cnpmcore = cnpmcoreConfig;
 
   // override config from framework / plugin
-  config.dataDir = join(appInfo.root, '.cnpmcore');
+  config.dataDir = process.env.CNPMCORE_DATA_DIR || join(appInfo.root, '.cnpmcore');
 
   config.orm = {
     client: 'mysql',
-    database: 'npm',
-    host: 'rm-uf6b5g31sq0001m6aro.mysql.rds.aliyuncs.com',
-    port: process.env.MYSQL_PORT || 3306,
-    user: 'npm',
-    password: 'npm123!!!',
+    database: process.env.CNPMCORE_MYSQL_DATABASE || process.env.MYSQL_DATABASE || 'cnpmcore',
+    host: process.env.CNPMCORE_MYSQL_HOST || process.env.MYSQL_HOST || '127.0.0.1',
+    port: process.env.CNPMCORE_MYSQL_PORT || process.env.MYSQL_PORT || 3306,
+    user: process.env.CNPMCORE_MYSQL_USER || process.env.MYSQL_USER || 'root',
+    password: process.env.CNPMCORE_MYSQL_PASSWORD || process.env.MYSQL_PASSWORD,
     charset: 'utf8mb4',
     logger: {},
   };
 
   config.redis = {
     client: {
-      port: 30013,
-      host: '192.168.100.105',
-      password: 'QEU7uqx',
-      db: 0,
+      port: Number(process.env.CNPMCORE_REDIS_PORT || 6379),
+      host: process.env.CNPMCORE_REDIS_HOST || '127.0.0.1',
+      password: process.env.CNPMCORE_REDIS_PASSWORD || '',
+      db: Number(process.env.CNPMCORE_REDIS_DB || 0),
     },
   };
 
@@ -127,31 +100,60 @@ export default (appInfo: EggAppConfig) => {
 
   config.nfs = {
     client: null,
-    dir: join(config.dataDir, 'nfs'),
+    dir: process.env.CNPMCORE_NFS_DIR || join(config.dataDir, 'nfs'),
   };
   /* c8 ignore next 17 */
   // enable oss nfs store by env values
-  // if (process.env.CNPMCORE_NFS_TYPE === 'oss') {
-    // assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
-    // assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
-    // assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
-    // assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
+  if (process.env.CNPMCORE_NFS_TYPE === 'oss') {
+    assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
+    assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
+    assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
+    assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
     config.nfs.client = new OSSClient({
-      cdnBaseUrl: 'https://npm-mirror.oss-cn-shanghai.aliyuncs.com',
-      endpoint: 'https://oss-cn-shanghai.aliyuncs.com',
-      bucket: 'npm-mirror',
-      accessKeyId: 'LTAI5t6vT7e5bRFCB8sNzfrq',
-      accessKeySecret: '769FWmliPsHBgutbC8moRZUODPT4d2',
+      cdnBaseUrl: process.env.CNPMCORE_NFS_OSS_CDN,
+      endpoint: process.env.CNPMCORE_NFS_OSS_ENDPOINT,
+      bucket: process.env.CNPMCORE_NFS_OSS_BUCKET,
+      accessKeyId: process.env.CNPMCORE_NFS_OSS_ID,
+      accessKeySecret: process.env.CNPMCORE_NFS_OSS_SECRET,
       defaultHeaders: {
         'Cache-Control': 'max-age=0, s-maxage=60',
       },
     });
-  // }
+  } else if (process.env.CNPMCORE_NFS_TYPE === 's3') {
+    assert(process.env.CNPMCORE_NFS_S3_CLIENT_ENDPOINT, 'require env CNPMCORE_NFS_S3_CLIENT_ENDPOINT');
+    assert(process.env.CNPMCORE_NFS_S3_CLIENT_ID, 'require env CNPMCORE_NFS_S3_CLIENT_ID');
+    assert(process.env.CNPMCORE_NFS_S3_CLIENT_SECRET, 'require env CNPMCORE_NFS_S3_CLIENT_SECRET');
+    assert(process.env.CNPMCORE_NFS_S3_CLIENT_BUCKET, 'require env CNPMCORE_NFS_S3_CLIENT_BUCKET');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const S3Client = require('s3-cnpmcore');
+    config.nfs.client = new S3Client({
+      region: process.env.CNPMCORE_NFS_S3_CLIENT_REGION || 'default',
+      endpoint: process.env.CNPMCORE_NFS_S3_CLIENT_ENDPOINT,
+      credentials: {
+        accessKeyId: process.env.CNPMCORE_NFS_S3_CLIENT_ID,
+        secretAccessKey: process.env.CNPMCORE_NFS_S3_CLIENT_SECRET,
+      },
+      bucket: process.env.CNPMCORE_NFS_S3_CLIENT_BUCKET,
+      forcePathStyle: !!process.env.CNPMCORE_NFS_S3_CLIENT_FORCE_PATH_STYLE,
+      disableURL: !!process.env.CNPMCORE_NFS_S3_CLIENT_DISABLE_URL,
+    });
+  }
 
   config.logger = {
     enablePerformanceTimer: true,
     enableFastContextLogger: true,
+    appLogName: process.env.CNPMCORE_APP_LOG_NAME || `${appInfo.name}-web.log`,
+    coreLogName: process.env.CNPMCORE_CORE_LOG_NAME || 'egg-web.log',
+    agentLogName: process.env.CNPMCORE_AGENT_LOG_NAME || 'egg-agent.log',
+    errorLogName: process.env.CNPMCORE_ERROR_LOG_NAME || 'common-error.log',
+    outputJSON: Boolean(process.env.CNPMCORE_LOG_JSON_OUTPUT || false),
   };
+  if (process.env.CNPMCORE_LOG_DIR) {
+    config.logger.dir = process.env.CNPMCORE_LOG_DIR;
+  }
+  if (process.env.CNPMCORE_LOG_JSON_OUTPUT) {
+    config.logger.outputJSON = Boolean(process.env.CNPMCORE_LOG_JSON_OUTPUT);
+  }
 
   config.logrotator = {
     // only keep 1 days log files

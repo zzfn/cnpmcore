@@ -17,6 +17,7 @@ import { Static, Type } from '@sinclair/typebox';
 import { AbstractController } from './AbstractController';
 import { LoginResultCode } from '../../common/enum/User';
 import { sha512 } from '../../common/UserUtil';
+import { isGranularToken } from '../../core/entity/Token';
 
 // body: {
 //   _id: 'org.couchdb.user:dddd',
@@ -89,7 +90,7 @@ export class UserController extends AbstractController {
       ctx.status = 201;
       return {
         ok: true,
-        id: `org.couchdb.user:${result.user?.name}`,
+        id: `org.couchdb.user:${result.user?.displayName}`,
         rev: result.user?.userId,
         token: result.token?.token,
       };
@@ -112,7 +113,7 @@ export class UserController extends AbstractController {
     ctx.status = 201;
     return {
       ok: true,
-      id: `org.couchdb.user:${userEntity.name}`,
+      id: `org.couchdb.user:${userEntity.displayName}`,
       rev: userEntity.userId,
       token: token.token,
     };
@@ -139,14 +140,14 @@ export class UserController extends AbstractController {
     method: HTTPMethodEnum.GET,
   })
   async showUser(@Context() ctx: EggContext, @HTTPParam() username: string) {
-    const user = await this.userRepository.findUserByName(username);
+    const user = await this.userService.findUserByNameOrDisplayName(username);
     if (!user) {
       throw new NotFoundError(`User "${username}" not found`);
     }
     const authorized = await this.userRoleManager.getAuthorizedUserAndToken(ctx);
     return {
-      _id: `org.couchdb.user:${user.name}`,
-      name: user.name,
+      _id: `org.couchdb.user:${user.displayName}`,
+      name: user.displayName,
       email: authorized ? user.email : undefined,
     };
   }
@@ -157,10 +158,34 @@ export class UserController extends AbstractController {
     method: HTTPMethodEnum.GET,
   })
   async whoami(@Context() ctx: EggContext) {
-    const authorizedUser = await this.userRoleManager.requiredAuthorizedUser(ctx, 'read');
+    await this.userRoleManager.requiredAuthorizedUser(ctx, 'read');
+    const authorizedRes = await this.userRoleManager.getAuthorizedUserAndToken(ctx);
+    const { token, user } = authorizedRes!;
+
+    if (isGranularToken(token)) {
+      const { name, description, expiredAt, allowedPackages, allowedScopes, lastUsedAt, type } = token;
+      return {
+        username: user.displayName,
+        name,
+        description,
+        allowedPackages,
+        allowedScopes,
+        lastUsedAt,
+        expiredAt,
+        // do not return token value
+        // token: token.token,
+        key: token.tokenKey,
+        cidr_whitelist: token.cidrWhitelist,
+        readonly: token.isReadonly,
+        created: token.createdAt,
+        updated: token.updatedAt,
+        type,
+      };
+    }
     return {
-      username: authorizedUser.displayName,
+      username: user.displayName,
     };
+
   }
 
   // https://github.com/cnpm/cnpmcore/issues/64
@@ -184,7 +209,7 @@ export class UserController extends AbstractController {
       //   "pending": false,
       //   "mode": "auth-only"
       // },
-      name: authorizedUser.name,
+      name: authorizedUser.displayName,
       email: authorizedUser.email,
       email_verified: false,
       created: authorizedUser.createdAt,

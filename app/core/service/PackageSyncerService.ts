@@ -5,12 +5,13 @@ import {
   Inject,
 } from '@eggjs/tegg';
 import { Pointcut } from '@eggjs/tegg/aop';
-import {
-  EggContextHttpClient,
-} from 'egg';
+import { EggHttpClient } from 'egg';
 import { setTimeout } from 'timers/promises';
 import { rm } from 'fs/promises';
+import { isEqual } from 'lodash';
 import semver from 'semver';
+import semverRcompare from 'semver/functions/rcompare';
+import semverPrerelease from 'semver/functions/prerelease';
 import { NPMRegistry, RegistryResponse } from '../../common/adapter/NPMRegistry';
 import { detectInstallScript, getScopeAndName } from '../../common/PackageUtil';
 import { downloadToTempfile } from '../../common/FileUtil';
@@ -32,7 +33,7 @@ import { Registry } from '../entity/Registry';
 import { BadRequestError } from 'egg-errors';
 import { ScopeManagerService } from './ScopeManagerService';
 import { EventCorkAdvice } from './EventCorkerAdvice';
-import { SyncDeleteMode } from '../../common/constants';
+import { PresetRegistryName, SyncDeleteMode } from '../../common/constants';
 
 type syncDeletePkgOptions = {
   task: Task,
@@ -73,7 +74,7 @@ export class PackageSyncerService extends AbstractService {
   @Inject()
   private readonly cacheService: CacheService;
   @Inject()
-  private readonly httpclient: EggContextHttpClient;
+  private readonly httpclient: EggHttpClient;
   @Inject()
   private readonly registryManagerService: RegistryManagerService;
   @Inject()
@@ -310,7 +311,7 @@ export class PackageSyncerService extends AbstractService {
   // 1. 其次从 task.data.registryId (创建单包同步任务时传入)
   // 2. 接着根据 scope 进行计算 (作为子包依赖同步时候，无 registryId)
   // 3. 最后返回 default registryId (可能 default registry 也不存在)
-  public async initSpecRegistry(task: Task, pkg: Package | null = null, scope?: string): Promise<Registry | null> {
+  public async initSpecRegistry(task: Task, pkg: Package | null = null, scope?: string): Promise<Registry> {
     const registryId = pkg?.registryId || (task.data as SyncPackageTaskOptions).registryId;
     let targetHost: string = this.config.cnpmcore.sourceRegistry;
     let registry: Registry | null = null;
@@ -349,7 +350,7 @@ export class PackageSyncerService extends AbstractService {
   public async executeTask(task: Task) {
     const fullname = task.targetName;
     const [ scope, name ] = getScopeAndName(fullname);
-    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, remoteAuthToken } = task.data as SyncPackageTaskOptions;
+    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, remoteAuthToken, specificVersions } = task.data as SyncPackageTaskOptions;
     let pkg = await this.packageRepository.findPackage(scope, name);
     const registry = await this.initSpecRegistry(task, pkg, scope);
     const registryHost = this.npmRegistry.registry;
@@ -361,12 +362,23 @@ export class PackageSyncerService extends AbstractService {
     const taskQueueHighWaterSize = this.config.cnpmcore.taskQueueHighWaterSize;
     const taskQueueInHighWaterState = taskQueueLength >= taskQueueHighWaterSize;
     const skipDependencies = taskQueueInHighWaterState ? true : !!originSkipDependencies;
-    const syncUpstream = !!(!taskQueueInHighWaterState && this.config.cnpmcore.sourceRegistryIsCNpm && this.config.cnpmcore.syncUpstreamFirst);
+    const syncUpstream = !!(!taskQueueInHighWaterState && this.config.cnpmcore.sourceRegistryIsCNpm && this.config.cnpmcore.syncUpstreamFirst && registry.name === PresetRegistryName.default);
     const logUrl = `${this.config.cnpmcore.registry}/-/package/${fullname}/syncs/${task.taskId}/log`;
     this.logger.info('[PackageSyncerService.executeTask:start] taskId: %s, targetName: %s, attempts: %s, taskQueue: %s/%s, syncUpstream: %s, log: %s',
       task.taskId, task.targetName, task.attempts, taskQueueLength, taskQueueHighWaterSize, syncUpstream, logUrl);
     logs.push(`[${isoNow()}] 🚧🚧🚧🚧🚧 Syncing from ${registryHost}/${fullname}, skipDependencies: ${skipDependencies}, syncUpstream: ${syncUpstream}, syncDownloadData: ${!!syncDownloadData}, forceSyncHistory: ${!!forceSyncHistory} attempts: ${task.attempts}, worker: "${os.hostname()}/${process.pid}", taskQueue: ${taskQueueLength}/${taskQueueHighWaterSize} 🚧🚧🚧🚧🚧`);
+    if (specificVersions) {
+      logs.push(`[${isoNow()}] 👉 syncing specific versions: ${specificVersions.join(' | ')} 👈`);
+    }
     logs.push(`[${isoNow()}] 🚧 log: ${logUrl}`);
+
+    if (registry?.name === PresetRegistryName.self) {
+      logs.push(`[${isoNow()}] ❌❌❌❌❌ ${fullname} has been published to the self registry, skip sync ❌❌❌❌❌`);
+      await this.taskService.finishTask(task, TaskState.Fail, logs.join('\n'));
+      this.logger.info('[PackageSyncerService.executeTask:fail] taskId: %s, targetName: %s, invalid registryId',
+        task.taskId, task.targetName);
+      return;
+    }
 
     if (pkg && pkg?.registryId !== registry?.registryId) {
       if (pkg.registryId) {
@@ -544,8 +556,20 @@ export class PackageSyncerService extends AbstractService {
     const existsVersionCount = Object.keys(existsVersionMap).length;
     const abbreviatedVersionMap = abbreviatedManifests?.versions ?? {};
     // 2. save versions
-    const versions = Object.values<any>(versionMap);
+    if (specificVersions && !this.config.cnpmcore.strictSyncSpecivicVersion && !specificVersions.includes(distTags.latest)) {
+      logs.push(`[${isoNow()}] 📦 Add latest tag version "${fullname}: ${distTags.latest}"`);
+      specificVersions.push(distTags.latest);
+    }
+    const versions = specificVersions ? Object.values<any>(versionMap).filter(verItem => specificVersions.includes(verItem.version)) : Object.values<any>(versionMap);
     logs.push(`[${isoNow()}] 🚧 Syncing versions ${existsVersionCount} => ${versions.length}`);
+    if (specificVersions) {
+      const availableVersionList = versions.map(item => item.version);
+      let notAvailableVersionList = specificVersions.filter(i => !availableVersionList.includes(i));
+      if (notAvailableVersionList.length > 0) {
+        notAvailableVersionList = Array.from(new Set(notAvailableVersionList));
+        logs.push(`[${isoNow()}] 🚧 Some specific versions are not available: 👉 ${notAvailableVersionList.join(' | ')} 👈`);
+      }
+    }
     const updateVersions: string[] = [];
     const differentMetas: any[] = [];
     let syncIndex = 0;
@@ -787,6 +811,24 @@ export class PackageSyncerService extends AbstractService {
         }
       }
     }
+    // 3.2 shoud add latest tag
+    // 在同步 sepcific version 时如果没有同步 latestTag 的版本会出现 latestTag 丢失或指向版本不正确的情况
+    if (specificVersions && this.config.cnpmcore.strictSyncSpecivicVersion) {
+      // 不允许自动同步 latest 版本，从已同步版本中选出 latest
+      let latestStableVersion: string;
+      const sortedVersionList = specificVersions.sort(semverRcompare);
+      latestStableVersion = sortedVersionList.filter(i => !semverPrerelease(i))[0];
+      // 所有版本都不是稳定版本则指向非稳定版本保证 latest 存在
+      if (!latestStableVersion) {
+        latestStableVersion = sortedVersionList[0];
+      }
+      if (!existsDistTags.latest || semverRcompare(existsDistTags.latest, latestStableVersion) === 1) {
+        logs.push(`[${isoNow()}] 🚧 patch latest tag from specific versions 🚧`);
+        changedTags.push({ action: 'change', tag: 'latest', version: latestStableVersion });
+        await this.packageManagerService.savePackageTag(pkg, 'latest', latestStableVersion);
+      }
+    }
+
     if (changedTags.length > 0) {
       logs.push(`[${isoNow()}] 🟢 Synced ${changedTags.length} tags: ${JSON.stringify(changedTags)}`);
     }
@@ -814,6 +856,15 @@ export class PackageSyncerService extends AbstractService {
       logs.push(`[${isoNow()}] 🟢 Removed ${removedMaintainers.length} maintainers: ${JSON.stringify(removedMaintainers)}`);
     }
 
+    // 4.2 update package maintainers in dist
+    // The event is initialized in the repository and distributed after uncork.
+    // maintainers' information is updated in bulk to ensure consistency.
+    if (!isEqual(maintainers, existsMaintainers)) {
+      logs.push(`[${isoNow()}] 🚧 Syncing maintainers to package manifest, from: ${JSON.stringify(maintainers)} to: ${JSON.stringify(existsMaintainers)}`);
+      await this.packageManagerService.refreshPackageMaintainersToDists(pkg);
+      logs.push(`[${isoNow()}] 🟢 Syncing maintainers to package manifest done`);
+    }
+
     // 5. add deps sync task
     for (const dependencyName of dependenciesSet) {
       const existsTask = await this.taskRepository.findTaskByTargetName(dependencyName, TaskType.SyncPackage, TaskState.Waiting);
@@ -826,6 +877,7 @@ export class PackageSyncerService extends AbstractService {
         authorId: task.authorId,
         authorIp: task.authorIp,
         tips,
+        remoteAuthToken,
       });
       logs.push(`[${isoNow()}] 📦 Add dependency "${dependencyName}" sync task: ${dependencyTask.taskId}, db id: ${dependencyTask.id}`);
     }

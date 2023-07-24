@@ -1,9 +1,9 @@
 import assert from 'assert';
 import { setTimeout } from 'timers/promises';
 import { app, mock } from 'egg-mock/bootstrap';
-import { TestUtil } from 'test/TestUtil';
-import { Task as TaskModel } from 'app/repository/model/Task';
-import { PackageSyncerService } from 'app/core/service/PackageSyncerService';
+import { TestUtil } from '../../../../test/TestUtil';
+import { Task as TaskModel } from '../../../../app/repository/model/Task';
+import { PackageSyncerService } from '../../../../app/core/service/PackageSyncerService';
 
 describe('test/port/controller/PackageSyncController/createSyncTask.test.ts', () => {
   let publisher: any;
@@ -58,6 +58,13 @@ describe('test/port/controller/PackageSyncController/createSyncTask.test.ts', ()
         .put(`/-/package/${pkg.name}/syncs`)
         .expect(403);
       assert(res.body.error === '[FORBIDDEN] Can\'t sync private package "@cnpm/koa"');
+    });
+
+    it('should 422 if specificVersions cannot parse is not valideted', async () => {
+      await app.httpRequest()
+        .put('/-/package/koa/syncs')
+        .send({ specificVersions: '1.0.0' })
+        .expect(422);
     });
 
     it('should 201 if user login when alwaysAuth = true', async () => {

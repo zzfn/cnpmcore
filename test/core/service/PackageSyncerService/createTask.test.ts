@@ -1,12 +1,12 @@
 import assert from 'assert';
 import { setTimeout } from 'timers/promises';
 import { app, mock } from 'egg-mock/bootstrap';
-import { TestUtil } from 'test/TestUtil';
-import { PackageSyncerService } from 'app/core/service/PackageSyncerService';
-import { Task } from 'app/core/entity/Task';
-import { TaskState } from 'app/common/enum/Task';
-import { TaskRepository } from 'app/repository/TaskRepository';
-import { TaskService } from 'app/core/service/TaskService';
+import { TestUtil } from '../../../../test/TestUtil';
+import { PackageSyncerService } from '../../../../app/core/service/PackageSyncerService';
+import { Task } from '../../../../app/core/entity/Task';
+import { TaskState } from '../../../../app/common/enum/Task';
+import { TaskRepository } from '../../../../app/repository/TaskRepository';
+import { TaskService } from '../../../../app/core/service/TaskService';
 
 describe('test/core/service/PackageSyncerService/createTask.test.ts', () => {
   const pkgName = '@cnpmcore/foo';
@@ -72,6 +72,27 @@ describe('test/core/service/PackageSyncerService/createTask.test.ts', () => {
       return await packageSyncerService.createTask(pkgName);
     })() ]);
     assert(res[1].taskId === task.taskId);
+  });
+
+  it('should append specific version to waiting task.', async () => {
+    const name = '@cnpmcore/test-sync-package-has-two-versions';
+    await packageSyncerService.createTask(name, { specificVersions: [ '1.0.0' ] });
+    await packageSyncerService.createTask(name, { specificVersions: [ '2.0.0' ] });
+    const task = await packageSyncerService.findExecuteTask();
+    assert(task);
+    assert.equal(task.targetName, name);
+    assert(task.data.specificVersions);
+    assert(task.data.specificVersions.length === 2);
+  });
+
+  it('should remove specific version, switch waiting task to sync all versions.', async () => {
+    const name = '@cnpmcore/test-sync-package-has-two-versions';
+    await packageSyncerService.createTask(name, { specificVersions: [ '1.0.0' ] });
+    await packageSyncerService.createTask(name);
+    const task = await packageSyncerService.findExecuteTask();
+    assert(task);
+    assert.equal(task.targetName, name);
+    assert(task.data.specificVersions === undefined);
   });
 
   it('should not duplicate task when waiting', async () => {

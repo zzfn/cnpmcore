@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { app, mock } from 'egg-mock/bootstrap';
-import { TestUtil } from 'test/TestUtil';
+import { TestUtil } from '../../../../test/TestUtil';
 
 describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', () => {
   let publisher;
@@ -10,7 +10,7 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
     publisher = await TestUtil.createUser();
   });
 
-  describe('[GET /:fullname/:versionOrTag/files] listFiles()', () => {
+  describe('[GET /:fullname/:versionSpec/files] listFiles()', () => {
     it('should 404 when enableUnpkg = false', async () => {
       mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
       mock(app.config.cnpmcore, 'enableUnpkg', false);
@@ -39,6 +39,44 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
       assert.equal(res.body.error, '[NOT_FOUND] Not Found');
     });
 
+    it('should 404 when empty entry', async () => {
+      mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
+      mock(app.config.cnpmcore, 'enableUnpkg', true);
+      const pkg = await TestUtil.getFullPackage({
+        name: 'foo',
+        version: '1.0.0',
+        versionObject: {
+          main: '',
+          description: 'empty main',
+        },
+      });
+      await app.httpRequest()
+        .put(`/${pkg.name}`)
+        .set('authorization', publisher.authorization)
+        .set('user-agent', publisher.ua)
+        .send(pkg)
+        .expect(201);
+      let res = await app.httpRequest()
+        .get('/foo/1.0.0/files')
+        .expect(302)
+        .expect('location', '/foo/1.0.0/files/index.js');
+
+      res = await app.httpRequest()
+        .get('/foo/1.0.0/files/index.js')
+        .expect(404)
+        .expect('content-type', 'application/json; charset=utf-8');
+      assert.equal(res.body.error, '[NOT_FOUND] File foo@1.0.0/index.js not found');
+    });
+
+    it('should 422 when invalid spec', async () => {
+      mock(app.config.cnpmcore, 'enableUnpkg', true);
+      const res = await app.httpRequest()
+        .get('/foo/@invalid-spec/files')
+        .expect(422);
+
+      assert.equal(res.body.error, '[INVALID_PARAM] must match format "semver-spec"');
+    });
+
     it('should list one package version files', async () => {
       mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
       const pkg = await TestUtil.getFullPackage({
@@ -55,6 +93,11 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
         .send(pkg)
         .expect(201);
       let res = await app.httpRequest()
+        .get('/foo/1.0.0')
+        .expect(200);
+      const publishTime = new Date(res.body.publish_time).toISOString();
+      const oldReadme = res.body.readme;
+      res = await app.httpRequest()
         .get('/foo/1.0.0/files/')
         .expect(200)
         .expect('content-type', 'application/json; charset=utf-8');
@@ -70,11 +113,16 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
             type: 'file',
             contentType: 'application/json',
             integrity: 'sha512-yTg/L7tUtFK54aNH3iwgIp7sF3PiAcUrIEUo06bSNq3haIKRnagy6qOwxiEmtfAtNarbjmEpl31ZymySsECi3Q==',
-            lastModified: '2014-02-25T10:53:34.000Z',
+            lastModified: publishTime,
             size: 209,
           },
         ],
       });
+      // not found README.md file, readme not change
+      res = await app.httpRequest()
+        .get('/foo/1.0.0')
+        .expect(200);
+      assert.equal(res.body.readme, oldReadme);
 
       // again should work
       res = await app.httpRequest()
@@ -93,7 +141,7 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
             type: 'file',
             contentType: 'application/json',
             integrity: 'sha512-yTg/L7tUtFK54aNH3iwgIp7sF3PiAcUrIEUo06bSNq3haIKRnagy6qOwxiEmtfAtNarbjmEpl31ZymySsECi3Q==',
-            lastModified: '2014-02-25T10:53:34.000Z',
+            lastModified: publishTime,
             size: 209,
           },
         ],
@@ -115,11 +163,28 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
         .send(pkg);
       assert.equal(res.status, 201);
       res = await app.httpRequest()
+        .get(`/${pkg.name}/latest`)
+        .expect(200);
+      const publishTime = new Date(res.body.publish_time).toISOString();
+      res = await app.httpRequest()
         .get(`/${pkg.name}/latest/files`);
       assert.equal(res.status, 302);
       assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files`);
       assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
       assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/^1.0.0/files`);
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files`);
+      assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
+      assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/%5E1.0.0/files`);
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files`);
+      assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
+      assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
+
       res = await app.httpRequest()
         .get(`/${pkg.name}/latest/files?meta&foo=bar`);
       assert.equal(res.status, 302);
@@ -146,7 +211,7 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
             type: 'file',
             contentType: 'application/json',
             integrity: 'sha512-yTg/L7tUtFK54aNH3iwgIp7sF3PiAcUrIEUo06bSNq3haIKRnagy6qOwxiEmtfAtNarbjmEpl31ZymySsECi3Q==',
-            lastModified: '2014-02-25T10:53:34.000Z',
+            lastModified: publishTime,
             size: 209,
           },
         ],
@@ -164,7 +229,7 @@ describe('test/port/controller/PackageVersionFileController/listFiles.test.ts', 
             type: 'file',
             contentType: 'application/json',
             integrity: 'sha512-yTg/L7tUtFK54aNH3iwgIp7sF3PiAcUrIEUo06bSNq3haIKRnagy6qOwxiEmtfAtNarbjmEpl31ZymySsECi3Q==',
-            lastModified: '2014-02-25T10:53:34.000Z',
+            lastModified: publishTime,
             size: 209,
           },
         ],

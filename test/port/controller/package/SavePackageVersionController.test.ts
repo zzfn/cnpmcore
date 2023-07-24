@@ -1,15 +1,16 @@
 import assert from 'assert';
 import { app, mock } from 'egg-mock/bootstrap';
-import { TestUtil } from 'test/TestUtil';
-import { UserRepository } from 'app/repository/UserRepository';
-import { calculateIntegrity } from 'app/common/PackageUtil';
-import { PackageRepository } from 'app/repository/PackageRepository';
-import { RegistryManagerService } from 'app/core/service/RegistryManagerService';
-import { UserService } from 'app/core/service/UserService';
-import { Token, TokenType } from 'app/core/entity/Token';
-import { Token as TokenModel } from 'app/repository/model/Token';
-import { User } from 'app/core/entity/User';
+import { TestUtil } from '../../../../test/TestUtil';
+import { UserRepository } from '../../../../app/repository/UserRepository';
+import { calculateIntegrity } from '../../../../app/common/PackageUtil';
+import { PackageRepository } from '../../../../app/repository/PackageRepository';
+import { RegistryManagerService } from '../../../../app/core/service/RegistryManagerService';
+import { UserService } from '../../../../app/core/service/UserService';
+import { Token, TokenType } from '../../../../app/core/entity/Token';
+import { Token as TokenModel } from '../../../../app/repository/model/Token';
+import { User } from '../../../../app/core/entity/User';
 import dayjs from 'dayjs';
+import { PackageManagerService } from '../../../../app/core/service/PackageManagerService';
 
 describe('test/port/controller/package/SavePackageVersionController.test.ts', () => {
   let userRepository: UserRepository;
@@ -20,6 +21,51 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
   });
 
   describe('[PUT /:fullname] save()', () => {
+    it('should set registry field after publish', async () => {
+      mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
+      const { pkg, user } = await TestUtil.createPackage({ name: 'non_scope_pkg', version: '1.0.0' });
+      const pkg2 = await TestUtil.getFullPackage({ name: pkg.name, version: '2.0.0' });
+      let res = await app.httpRequest()
+        .put(`/${pkg2.name}`)
+        .set('authorization', user.authorization)
+        .set('user-agent', user.ua)
+        .send(pkg2);
+
+      assert.equal(res.status, 201);
+
+      res = await app.httpRequest()
+        .get(`/${pkg2.name}`)
+        .expect(200);
+
+      const fullManifest = res.body;
+
+      res = await app.httpRequest()
+        .get(`/${pkg2.name}`)
+        .set('Accept', 'application/vnd.npm.install-v1+json')
+        .expect(200);
+
+      const abbreviatedManifest = res.body;
+
+      [ fullManifest, abbreviatedManifest ].forEach(manifest => {
+        Object.keys(manifest.versions).forEach(v => {
+          const version = manifest.versions[v];
+          assert(version);
+          assert.equal(version._source_registry_name, 'self');
+          assert(version.publish_time);
+        });
+      });
+
+      Object.keys(fullManifest.versions).forEach(v => {
+        const version = fullManifest.versions[v];
+        assert(version);
+        assert(version._cnpmcore_publish_time);
+        assert.deepEqual(version._npmUser, {
+          name: user.name,
+          email: user.email,
+        });
+      });
+
+    });
     it('should 200 when package in current registry', async () => {
       mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
       const { pkg, user } = await TestUtil.createPackage({ name: 'non_scope_pkg', version: '1.0.0' });
@@ -39,6 +85,39 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
 
       assert(pkgEntity);
       assert.equal(pkgEntity.registryId, selfRegistry.registryId);
+    });
+    it('should verify tgz and manifest', async () => {
+      const { pkg, user } = await TestUtil.createPackage({ name: '@cnpm/banana', version: '1.0.0' });
+      const pkg2 = await TestUtil.getFullPackage({ name: pkg.name, version: '0.0.1' });
+
+      pkg2.versions['0.0.1'].name = '@cnpm/orange';
+
+      mock(app.config.cnpmcore, 'strictValidateTarballPkg', true);
+      const res = await app.httpRequest()
+        .put(`/${pkg2.name}`)
+        .set('authorization', user.authorization)
+        .set('user-agent', user.ua)
+        .send(pkg2)
+        .expect(422);
+
+      assert.equal(res.body.error, '[UNPROCESSABLE_ENTITY] name mismatch between tarball and manifest');
+    });
+    it('should verify tgz and manifest with multiple fields', async () => {
+      mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
+      const { pkg, user } = await TestUtil.createPackage({ name: 'non_scope_pkg', version: '1.0.0' });
+      const pkg2 = await TestUtil.getFullPackage({ name: pkg.name, version: '0.0.1' });
+
+      pkg2.versions['0.0.1'].dependencies = { lodash: 'latest' };
+
+      mock(app.config.cnpmcore, 'strictValidateTarballPkg', true);
+      const res = await app.httpRequest()
+        .put(`/${pkg2.name}`)
+        .set('authorization', user.authorization)
+        .set('user-agent', user.ua)
+        .send(pkg2)
+        .expect(422);
+
+      assert.equal(res.body.error, '[UNPROCESSABLE_ENTITY] name,dependencies mismatch between tarball and manifest');
     });
 
     it('should add new version success on scoped package', async () => {
@@ -133,6 +212,10 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
       pkgEntity.registryId = '';
       await packageRepository.savePackage(pkgEntity!);
 
+      res = await app.httpRequest()
+        .get(`/${pkg.name}`);
+      assert.equal(res.body._source_registry_name, 'default');
+
       pkg = await TestUtil.getFullPackage({ name, version: '2.0.0' });
       res = await app.httpRequest()
         .put(`/${pkg.name}`)
@@ -143,6 +226,10 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
 
       pkgEntity = await packageRepository.findPackage('@cnpm', 'publish-package-test');
       assert(pkgEntity?.registryId);
+
+      res = await app.httpRequest()
+        .get(`/${pkg.name}`);
+      assert.equal(res.body._source_registry_name, 'self');
     });
 
     it('should publish on user custom scopes', async () => {
@@ -664,6 +751,37 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
         .send(pkg);
       assert(res.status === 422);
       assert(res.body.error === '[UNPROCESSABLE_ENTITY] package.name invalid, errors: name can no longer contain more than 214 characters, name can no longer contain capital letters');
+    });
+
+    it('should allow to publish exists pkg', async () => {
+      mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
+      const packageManagerService = await app.getEggObject(PackageManagerService);
+      const pkg = await TestUtil.getFullPackage({
+        name: '@cnpm/LegacyName',
+      });
+      const user = await userRepository.findUserByName(publisher.name);
+      await packageManagerService.publish({
+        scope: '@cnpm',
+        name: 'LegacyName',
+        version: '1.0.0',
+        description: '-',
+        packageJson: pkg,
+        readme: '',
+        dist: {
+          content: Buffer.from('', 'base64'),
+        },
+        tag: 'latest',
+        isPrivate: true,
+      }, user!);
+
+
+      const res = await app.httpRequest()
+        .put(`/${pkg.name}`)
+        .set('authorization', publisher.authorization)
+        .set('user-agent', publisher.ua)
+        .send(pkg);
+      assert(res.status === 201);
+
     });
 
     it('should 422 when attachment data format invalid', async () => {

@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { app, mock } from 'egg-mock/bootstrap';
-import { TestUtil } from 'test/TestUtil';
-import { calculateIntegrity } from 'app/common/PackageUtil';
+import { TestUtil } from '../../../../test/TestUtil';
+import { calculateIntegrity } from '../../../../app/common/PackageUtil';
+import { PackageTagChanged, PackageTagAdded } from '../../../../app/core/event/SyncPackageVersionFile';
 
 describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => {
   let publisher;
@@ -11,7 +12,7 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
     publisher = await TestUtil.createUser();
   });
 
-  describe('[GET /:fullname/:versionOrTag/files/:path] raw()', () => {
+  describe('[GET /:fullname/:versionSpec/files/:path] raw()', () => {
     it('should show one package version raw file', async () => {
       mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
       const pkg = await TestUtil.getFullPackage({
@@ -70,6 +71,20 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
       assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files/package.json`);
       assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
       assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
+
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/^1.0.0/files/package.json`);
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files/package.json`);
+      assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
+      assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
+
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/%5E1.0.0/files/package.json`);
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.location, `/${pkg.name}/1.0.0/files/package.json`);
+      assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
+      assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
     });
 
     it('should show one package version file meta', async () => {
@@ -88,7 +103,11 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
         .send(pkg)
         .expect(201);
       let res = await app.httpRequest()
-        .get('/foo/1.0.0/files/package.json?meta')
+        .get(`/${pkg.name}/1.0.0`)
+        .expect(200);
+      const publishTime = new Date(res.body.publish_time).toISOString();
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0/files/package.json?meta`)
         .expect(200)
         .expect('content-type', 'application/json; charset=utf-8');
       // console.log(res.body);
@@ -99,7 +118,7 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
         type: 'file',
         contentType: 'application/json',
         integrity: 'sha512-yTg/L7tUtFK54aNH3iwgIp7sF3PiAcUrIEUo06bSNq3haIKRnagy6qOwxiEmtfAtNarbjmEpl31ZymySsECi3Q==',
-        lastModified: '2014-02-25T10:53:34.000Z',
+        lastModified: publishTime,
         size: 209,
       });
 
@@ -117,6 +136,15 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
       assert(!res.headers.etag);
       assert(!res.headers['cache-control']);
       assert.equal(res.body.error, `[NOT_FOUND] File ${pkg.name}@1.0.0/package2.json not found`);
+    });
+
+    it('should 422 when invalid spec', async () => {
+      mock(app.config.cnpmcore, 'enableUnpkg', true);
+      const res = await app.httpRequest()
+        .get('/foo/@invalid-spec/files/package.json?meta')
+        .expect(422);
+
+      assert.equal(res.body.error, '[INVALID_PARAM] must match format "semver-spec"');
     });
 
     it('should ignore not exists file on tar onentry', async () => {
@@ -188,6 +216,46 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
       assert.match(res.text, /ToOneFromχ/);
     });
 
+    it('should support non-npm pack tgz file', async () => {
+      // https://github.com/cnpm/cnpmcore/issues/452#issuecomment-1570077310
+      const tarball = await TestUtil.readFixturesFile('unpkg.com/lodash-es-4.17.7.tgz');
+      const { integrity } = await calculateIntegrity(tarball);
+      const pkg = await TestUtil.getFullPackage({
+        name: '@cnpm/lodash-es',
+        version: '1.0.0',
+        versionObject: {
+          description: 'foo latest description',
+        },
+        attachment: {
+          data: tarball.toString('base64'),
+          length: tarball.length,
+        },
+        dist: {
+          integrity,
+        },
+        main: '',
+      });
+      let res = await app.httpRequest()
+        .put(`/${pkg.name}`)
+        .set('authorization', publisher.authorization)
+        .set('user-agent', publisher.ua)
+        .send(pkg);
+      assert.equal(res.status, 201);
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0/files/`);
+      assert.equal(res.status, 200);
+      assert(res.body.files.find((file: { path: string }) => file.path === '/package.json'));
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0/files/zipObjectDeep.d.ts`);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers['content-type'], 'text/plain; charset=utf-8');
+      assert.match(res.text, /export default zipObjectDeep/);
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0/files`);
+      assert.equal(res.status, 302);
+      assert.equal(res.header.location, `/${pkg.name}/1.0.0/files/index.js`);
+    });
+
     it('should ignore "." hidden dir', async () => {
       // https://unpkg.com/browse/bovo-ui@0.0.4-36/
       const tarball = await TestUtil.readFixturesFile('unpkg.com/bovo-ui-0.0.4-36.tgz');
@@ -219,6 +287,17 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
       // console.log(res.body);
       assert.equal(res.body.files.find(file => file.path === '/.'), undefined);
       assert(res.body.files.find(file => file.path === '/dist'));
+      const packageTagAdded = await app.getEggObject(PackageTagAdded);
+      await packageTagAdded.handle(pkg.name, 'foo');
+      await packageTagAdded.handle(pkg.name, 'latest');
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0`);
+      const readme = res.body.readme;
+      assert.match(readme, /# bovo-ui/);
+      // pkg readme change to latest
+      res = await app.httpRequest()
+        .get(`/${pkg.name}`);
+      assert.equal(res.body.readme, readme);
     });
 
     it('should handle big tgz file', async () => {
@@ -246,6 +325,12 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
         .send(pkg);
       assert.equal(res.status, 201);
       res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0`)
+        .expect(200);
+      const publishTime = new Date(res.body.publish_time).toISOString();
+      const oldReadme = res.body.readme;
+
+      res = await app.httpRequest()
         .get(`/${pkg.name}/1.0.0/files/`);
       assert.equal(res.status, 200);
       // console.log('%o', res.body);
@@ -261,6 +346,21 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
       assert.equal(res.headers['cache-control'], 'public, s-maxage=600, max-age=60');
       assert.equal(res.headers.vary, 'Origin, Accept, Accept-Encoding');
       assert.equal(res.body.path, '/');
+
+      // pkg version readme should change
+      res = await app.httpRequest()
+        .get(`/${pkg.name}/1.0.0`)
+        .expect(200);
+      assert.notEqual(res.body.readme, oldReadme);
+      assert.match(res.body.readme, /The Javascript Database that Syncs/);
+      const packageTagChanged = await app.getEggObject(PackageTagChanged);
+      await packageTagChanged.handle(pkg.name, 'foo');
+      await packageTagChanged.handle(pkg.name, 'latest');
+      // pkg version change too
+      res = await app.httpRequest()
+        .get(`/${pkg.name}`)
+        .expect(200);
+      assert.match(res.body.readme, /The Javascript Database that Syncs/);
 
       res = await app.httpRequest()
         .get(`/${pkg.name}/1.0.0/files?meta=true`);
@@ -317,7 +417,7 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
         type: 'file',
         contentType: 'text/html',
         integrity: 'sha512-o/nCeU2MBJpIWhA8gIbf6YW49Ss3Spga5M70LJjjyRMlALQDmeh8IVMXagAe79l1Yznci/otKtNjWhVMOM38hg==',
-        lastModified: '2015-01-05T21:14:06.000Z',
+        lastModified: publishTime,
         size: 26716,
       });
 
@@ -360,7 +460,7 @@ describe('test/port/controller/PackageVersionFileController/raw.test.ts', () => 
         type: 'file',
         contentType: 'application/javascript',
         integrity: 'sha512-yysF4V48yKDI9yWuROuPd9cn9dn3nFQaAGkGMe46l6htQ6ZsoX4SAw9+FkhmmPez2VjxW/lYhWy21R1oOOu8Fw==',
-        lastModified: '2014-12-29T16:20:41.000Z',
+        lastModified: publishTime,
         size: 1917,
       });
 
