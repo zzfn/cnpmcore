@@ -31,8 +31,8 @@ steps:
         from_secret: nexus_docker_password
       repo: hub.ccw.es/home/cnpmcore
       tags: 
-       - ${DRONE_COMMIT_SHA:0:8}
-       - latest
+        - ${DRONE_COMMIT_SHA:0:8}
+        - latest
   - name: ssh
     image: appleboy/drone-ssh
     settings:
