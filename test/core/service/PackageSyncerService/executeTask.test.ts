@@ -304,7 +304,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       assert(stream);
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
-      assert(log.includes('] 🟢🟢🟢🟢🟢'));
+      assert(log.includes('] 🔗'));
       app.mockAgent().assertNoPendingInterceptors();
     });
 
@@ -333,7 +333,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       assert(stream);
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
-      assert(log.includes('] 🟢🟢🟢🟢🟢'));
+      assert(log.includes('] 🔗'));
       app.mockAgent().assertNoPendingInterceptors();
     });
 
@@ -428,8 +428,10 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       assert(log.includes('] 📦 Add dependency "@resvg/resvg-js-win32-x64-msvc" sync task: '));
     });
 
-    it('should bring auth token when set remoteAuthToken', async () => {
+    it('should bring auth token which in registry database.', async () => {
       const testToken = 'test-auth-token';
+      const registry = await registryManagerService.ensureDefaultRegistry();
+      await registryManagerService.updateRegistry(registry.registryId, { ...registry, authToken: testToken });
       const fullManifests = await TestUtil.readFixturesFile('registry.npmjs.org/foobar.json');
       const tgzBuffer1_0_0 = await TestUtil.readFixturesFile('registry.npmjs.org/foobar/-/foobar-1.0.0.tgz');
       const tgzBuffer1_1_0 = await TestUtil.readFixturesFile('registry.npmjs.org/foobar/-/foobar-1.1.0.tgz');
@@ -459,7 +461,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
           persist: false,
         };
       });
-      await packageSyncerService.createTask('foobar', { skipDependencies: true, remoteAuthToken: testToken });
+      await packageSyncerService.createTask('foobar', { skipDependencies: true });
       const task = await packageSyncerService.findExecuteTask();
       assert(task);
       await packageSyncerService.executeTask(task);
@@ -1161,7 +1163,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       assert(stream);
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
-      assert(log.includes('] 🟢🟢🟢🟢🟢 https://registry.npmjs.org/cnpmcore-test-sync-deprecated'));
+      assert(log.includes('] 🔗 https://registry.npmjs.org/cnpmcore-test-sync-deprecated'));
       const { data } = await packageManagerService.listPackageFullManifests('', name);
       assert(data!.readme === 'mock readme content');
       assert(data!.versions['0.0.0']!.readme === undefined);
@@ -1633,7 +1635,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
       assert(log.includes('📖 Use the latest version(0.0.0) maintainers instead'));
-      assert(log.includes('] 🟢🟢🟢🟢🟢 '));
+      assert(log.includes('] 🔗'));
       app.mockAgent().assertNoPendingInterceptors();
     });
 
@@ -1716,7 +1718,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
       assert(log.includes('🚧🚧🚧🚧🚧 Syncing from https://registry.npmjs.org/D, '));
-      assert(log.includes('🟢🟢🟢🟢🟢'));
+      assert(log.includes('🔗'));
       const res = await app.httpRequest()
         .get(`/${name}`)
         .expect(200)
@@ -1748,7 +1750,7 @@ describe('test/core/service/PackageSyncerService/executeTask.test.ts', () => {
       const log = await TestUtil.readStreamToLog(stream);
       // console.log(log);
       assert(log.includes('🚧🚧🚧🚧🚧 Syncing from https://registry.npmjs.org/Buffer, '));
-      assert(log.includes('🟢🟢🟢🟢🟢'));
+      assert(log.includes('🔗'));
       const res = await app.httpRequest()
         .get(`/${name}`)
         .expect(200)

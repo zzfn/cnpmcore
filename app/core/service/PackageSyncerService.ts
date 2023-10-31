@@ -116,17 +116,18 @@ export class PackageSyncerService extends AbstractService {
     if (!this.allowSyncDownloadData) {
       return;
     }
+
     const fullname = pkg.fullname;
     const start = '2011-01-01';
     const end = this.config.cnpmcore.syncDownloadDataMaxDate;
     const registry = this.config.cnpmcore.syncDownloadDataSourceRegistry;
+    const remoteAuthToken = await this.registryManagerService.getAuthTokenByRegistryHost(registry);
     const logs: string[] = [];
     let downloads: { day: string; downloads: number }[];
 
     logs.push(`[${isoNow()}][DownloadData] 🚧🚧🚧🚧🚧 Syncing "${fullname}" download data "${start}:${end}" on ${registry} 🚧🚧🚧🚧🚧`);
     const failEnd = '❌❌❌❌❌ 🚮 give up 🚮 ❌❌❌❌❌';
     try {
-      const { remoteAuthToken } = task.data as SyncPackageTaskOptions;
       const { data, status, res } = await this.npmRegistry.getDownloadRanges(registry, fullname, start, end, { remoteAuthToken });
       downloads = data.downloads || [];
       logs.push(`[${isoNow()}][DownloadData] 🚧 HTTP [${status}] timing: ${JSON.stringify(res.timing)}, downloads: ${downloads.length}`);
@@ -163,7 +164,7 @@ export class PackageSyncerService extends AbstractService {
   private async syncUpstream(task: Task) {
     const registry = this.npmRegistry.registry;
     const fullname = task.targetName;
-    const { remoteAuthToken } = task.data as SyncPackageTaskOptions;
+    const remoteAuthToken = await this.registryManagerService.getAuthTokenByRegistryHost(registry);
     let logs: string[] = [];
     let logId = '';
     logs.push(`[${isoNow()}][UP] 🚧🚧🚧🚧🚧 Waiting sync "${fullname}" task on ${registry} 🚧🚧🚧🚧🚧`);
@@ -203,8 +204,8 @@ export class PackageSyncerService extends AbstractService {
         const log = data && data.log || '';
         offset += log.length;
         if (data && data.syncDone) {
-          logs.push(`[${isoNow()}][UP] 🟢 Sync ${fullname} success [${useTime}ms], log: ${logUrl}, offset: ${offset}`);
-          logs.push(`[${isoNow()}][UP] 🟢🟢🟢🟢🟢 ${registry}/${fullname} 🟢🟢🟢🟢🟢`);
+          logs.push(`[${isoNow()}][UP] 🎉 Sync ${fullname} success [${useTime}ms], log: ${logUrl}, offset: ${offset}`);
+          logs.push(`[${isoNow()}][UP] 🔗 ${registry}/${fullname}`);
           await this.taskService.appendTaskLog(task, logs.join('\n'));
           return;
         }
@@ -298,8 +299,8 @@ export class PackageSyncerService extends AbstractService {
     }
 
     // update log
-    logs.push(`[${isoNow()}] 🟢 log: ${logUrl}`);
-    logs.push(`[${isoNow()}] 🟢🟢🟢🟢🟢 ${url} 🟢🟢🟢🟢🟢`);
+    logs.push(`[${isoNow()}] 📝 Log URL: ${logUrl}`);
+    logs.push(`[${isoNow()}] 🔗 ${url}`);
     await this.taskService.finishTask(task, TaskState.Success, logs.join('\n'));
     this.logger.info('[PackageSyncerService.executeTask:remove-package] taskId: %s, targetName: %s',
       task.taskId, task.targetName);
@@ -350,10 +351,11 @@ export class PackageSyncerService extends AbstractService {
   public async executeTask(task: Task) {
     const fullname = task.targetName;
     const [ scope, name ] = getScopeAndName(fullname);
-    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, remoteAuthToken, specificVersions } = task.data as SyncPackageTaskOptions;
+    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, specificVersions } = task.data as SyncPackageTaskOptions;
     let pkg = await this.packageRepository.findPackage(scope, name);
     const registry = await this.initSpecRegistry(task, pkg, scope);
     const registryHost = this.npmRegistry.registry;
+    const remoteAuthToken = registry.authToken;
     let logs: string[] = [];
     if (tips) {
       logs.push(`[${isoNow()}] 👉👉👉👉👉 Tips: ${tips} 👈👈👈👈👈`);
@@ -659,7 +661,11 @@ export class PackageSyncerService extends AbstractService {
         localFile = tmpfile;
         logs.push(`[${isoNow()}] 🚧 [${syncIndex}] HTTP content-length: ${headers['content-length']}, timing: ${JSON.stringify(timing)} => ${localFile}`);
       } catch (err: any) {
-        this.logger.error('Download tarball %s error: %s', tarball, err);
+        if (err.name === 'DownloadNotFoundError' || err.name === 'DownloadStatusInvalidError') {
+          this.logger.warn('Download tarball %s error: %s', tarball, err);
+        } else {
+          this.logger.error('Download tarball %s error: %s', tarball, err);
+        }
         lastErrorMessage = `download tarball error: ${err}`;
         logs.push(`[${isoNow()}] ❌ [${syncIndex}] Synced version ${version} fail, ${lastErrorMessage}`);
         await this.taskService.appendTaskLog(task, logs.join('\n'));
@@ -690,7 +696,7 @@ export class PackageSyncerService extends AbstractService {
         const publisher = users.find(user => user.displayName === item._npmUser?.name) || users[0];
         const pkgVersion = await this.packageManagerService.publish(publishCmd, publisher);
         updateVersions.push(pkgVersion.version);
-        logs.push(`[${isoNow()}] 🟢 [${syncIndex}] Synced version ${version} success, packageVersionId: ${pkgVersion.packageVersionId}, db id: ${pkgVersion.id}`);
+        logs.push(`[${isoNow()}] 🎉 [${syncIndex}] Synced version ${version} success, packageVersionId: ${pkgVersion.packageVersionId}, db id: ${pkgVersion.id}`);
       } catch (err: any) {
         if (err.name === 'ForbiddenError') {
           logs.push(`[${isoNow()}] 🐛 [${syncIndex}] Synced version ${version} already exists, skip publish, try to set in local manifest`);
@@ -874,7 +880,6 @@ export class PackageSyncerService extends AbstractService {
         authorId: task.authorId,
         authorIp: task.authorIp,
         tips,
-        remoteAuthToken,
       });
       logs.push(`[${isoNow()}] 📦 Add dependency "${dependencyName}" sync task: ${dependencyTask.taskId}, db id: ${dependencyTask.id}`);
     }
@@ -885,9 +890,9 @@ export class PackageSyncerService extends AbstractService {
 
     // clean cache
     await this.cacheService.removeCache(fullname);
-    logs.push(`[${isoNow()}] 🟢 Clean cache`);
-    logs.push(`[${isoNow()}] 🟢 log: ${logUrl}`);
-    logs.push(`[${isoNow()}] 🟢🟢🟢🟢🟢 ${url} 🟢🟢🟢🟢🟢`);
+    logs.push(`[${isoNow()}] 🗑️ Clean cache`);
+    logs.push(`[${isoNow()}] 📝 Log URL: ${logUrl}`);
+    logs.push(`[${isoNow()}] 🔗 ${url}`);
     task.error = lastErrorMessage;
     await this.taskService.finishTask(task, TaskState.Success, logs.join('\n'));
     this.logger.info('[PackageSyncerService.executeTask:success] taskId: %s, targetName: %s',
