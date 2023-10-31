@@ -8,7 +8,7 @@ import { Pointcut } from '@eggjs/tegg/aop';
 import { EggHttpClient } from 'egg';
 import { setTimeout } from 'timers/promises';
 import { rm } from 'fs/promises';
-import { isEqual } from 'lodash';
+import { isEqual, isEmpty } from 'lodash';
 import semver from 'semver';
 import semverRcompare from 'semver/functions/rcompare';
 import semverPrerelease from 'semver/functions/prerelease';
@@ -18,7 +18,7 @@ import { downloadToTempfile } from '../../common/FileUtil';
 import { TaskState, TaskType } from '../../common/enum/Task';
 import { AbstractService } from '../../common/AbstractService';
 import { TaskRepository } from '../../repository/TaskRepository';
-import { PackageRepository } from '../../repository/PackageRepository';
+import { PackageJSONType, PackageManifestType, PackageRepository } from '../../repository/PackageRepository';
 import { PackageVersionDownloadRepository } from '../../repository/PackageVersionDownloadRepository';
 import { UserRepository } from '../../repository/UserRepository';
 import { Task, SyncPackageTaskOptions, CreateSyncPackageTask } from '../entity/Task';
@@ -116,17 +116,18 @@ export class PackageSyncerService extends AbstractService {
     if (!this.allowSyncDownloadData) {
       return;
     }
+
     const fullname = pkg.fullname;
     const start = '2011-01-01';
     const end = this.config.cnpmcore.syncDownloadDataMaxDate;
     const registry = this.config.cnpmcore.syncDownloadDataSourceRegistry;
+    const remoteAuthToken = await this.registryManagerService.getAuthTokenByRegistryHost(registry);
     const logs: string[] = [];
     let downloads: { day: string; downloads: number }[];
 
     logs.push(`[${isoNow()}][DownloadData] 🚧🚧🚧🚧🚧 Syncing "${fullname}" download data "${start}:${end}" on ${registry} 🚧🚧🚧🚧🚧`);
     const failEnd = '❌❌❌❌❌ 🚮 give up 🚮 ❌❌❌❌❌';
     try {
-      const { remoteAuthToken } = task.data as SyncPackageTaskOptions;
       const { data, status, res } = await this.npmRegistry.getDownloadRanges(registry, fullname, start, end, { remoteAuthToken });
       downloads = data.downloads || [];
       logs.push(`[${isoNow()}][DownloadData] 🚧 HTTP [${status}] timing: ${JSON.stringify(res.timing)}, downloads: ${downloads.length}`);
@@ -163,7 +164,7 @@ export class PackageSyncerService extends AbstractService {
   private async syncUpstream(task: Task) {
     const registry = this.npmRegistry.registry;
     const fullname = task.targetName;
-    const { remoteAuthToken } = task.data as SyncPackageTaskOptions;
+    const remoteAuthToken = await this.registryManagerService.getAuthTokenByRegistryHost(registry);
     let logs: string[] = [];
     let logId = '';
     logs.push(`[${isoNow()}][UP] 🚧🚧🚧🚧🚧 Waiting sync "${fullname}" task on ${registry} 🚧🚧🚧🚧🚧`);
@@ -203,8 +204,8 @@ export class PackageSyncerService extends AbstractService {
         const log = data && data.log || '';
         offset += log.length;
         if (data && data.syncDone) {
-          logs.push(`[${isoNow()}][UP] 🟢 Sync ${fullname} success [${useTime}ms], log: ${logUrl}, offset: ${offset}`);
-          logs.push(`[${isoNow()}][UP] 🟢🟢🟢🟢🟢 ${registry}/${fullname} 🟢🟢🟢🟢🟢`);
+          logs.push(`[${isoNow()}][UP] 🎉 Sync ${fullname} success [${useTime}ms], log: ${logUrl}, offset: ${offset}`);
+          logs.push(`[${isoNow()}][UP] 🔗 ${registry}/${fullname}`);
           await this.taskService.appendTaskLog(task, logs.join('\n'));
           return;
         }
@@ -298,8 +299,8 @@ export class PackageSyncerService extends AbstractService {
     }
 
     // update log
-    logs.push(`[${isoNow()}] 🟢 log: ${logUrl}`);
-    logs.push(`[${isoNow()}] 🟢🟢🟢🟢🟢 ${url} 🟢🟢🟢🟢🟢`);
+    logs.push(`[${isoNow()}] 📝 Log URL: ${logUrl}`);
+    logs.push(`[${isoNow()}] 🔗 ${url}`);
     await this.taskService.finishTask(task, TaskState.Success, logs.join('\n'));
     this.logger.info('[PackageSyncerService.executeTask:remove-package] taskId: %s, targetName: %s',
       task.taskId, task.targetName);
@@ -350,10 +351,11 @@ export class PackageSyncerService extends AbstractService {
   public async executeTask(task: Task) {
     const fullname = task.targetName;
     const [ scope, name ] = getScopeAndName(fullname);
-    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, remoteAuthToken, specificVersions } = task.data as SyncPackageTaskOptions;
+    const { tips, skipDependencies: originSkipDependencies, syncDownloadData, forceSyncHistory, specificVersions } = task.data as SyncPackageTaskOptions;
     let pkg = await this.packageRepository.findPackage(scope, name);
     const registry = await this.initSpecRegistry(task, pkg, scope);
     const registryHost = this.npmRegistry.registry;
+    const remoteAuthToken = registry.authToken;
     let logs: string[] = [];
     if (tips) {
       logs.push(`[${isoNow()}] 👉👉👉👉👉 Tips: ${tips} 👈👈👈👈👈`);
@@ -484,7 +486,7 @@ export class PackageSyncerService extends AbstractService {
     //   { name: 'jasonlaster11', email: 'jason.laster.11@gmail.com' }
     // ],
     let maintainers = data.maintainers;
-    const maintainersMap = {};
+    const maintainersMap: Record<string, PackageManifestType['maintainers']> = {};
     const users: User[] = [];
     let changedUserCount = 0;
     if (!Array.isArray(maintainers) || maintainers.length === 0) {
@@ -560,7 +562,7 @@ export class PackageSyncerService extends AbstractService {
       logs.push(`[${isoNow()}] 📦 Add latest tag version "${fullname}: ${distTags.latest}"`);
       specificVersions.push(distTags.latest);
     }
-    const versions = specificVersions ? Object.values<any>(versionMap).filter(verItem => specificVersions.includes(verItem.version)) : Object.values<any>(versionMap);
+    const versions: PackageJSONType[] = specificVersions ? Object.values<any>(versionMap).filter(verItem => specificVersions.includes(verItem.version)) : Object.values<any>(versionMap);
     logs.push(`[${isoNow()}] 🚧 Syncing versions ${existsVersionCount} => ${versions.length}`);
     if (specificVersions) {
       const availableVersionList = versions.map(item => item.version);
@@ -571,7 +573,7 @@ export class PackageSyncerService extends AbstractService {
       }
     }
     const updateVersions: string[] = [];
-    const differentMetas: any[] = [];
+    const differentMetas: [PackageJSONType, Partial<PackageJSONType>][] = [];
     let syncIndex = 0;
     for (const item of versions) {
       const version: string = item.version;
@@ -605,10 +607,10 @@ export class PackageSyncerService extends AbstractService {
         // check metaDataKeys, if different value, override exists one
         // https://github.com/cnpm/cnpmjs.org/issues/1667
         // need libc field https://github.com/cnpm/cnpmcore/issues/187
-        const metaDataKeys = [
-          'peerDependenciesMeta', 'os', 'cpu', 'libc', 'workspaces', 'hasInstallScript', 'deprecated',
-        ];
-        let diffMeta: any;
+        // fix _npmUser field since https://github.com/cnpm/cnpmcore/issues/553
+        const metaDataKeys = [ 'peerDependenciesMeta', 'os', 'cpu', 'libc', 'workspaces', 'hasInstallScript', 'deprecated', '_npmUser' ];
+        const ignoreInAbbreviated = [ '_npmUser' ];
+        const diffMeta: Partial<PackageJSONType> = {};
         for (const key of metaDataKeys) {
           let remoteItemValue = item[key];
           // make sure hasInstallScript exists
@@ -617,34 +619,30 @@ export class PackageSyncerService extends AbstractService {
               remoteItemValue = true;
             }
           }
-          const remoteItemDiffValue = JSON.stringify(remoteItemValue);
-          if (remoteItemDiffValue !== JSON.stringify(existsItem[key])) {
-            if (!diffMeta) diffMeta = {};
+          if (!isEqual(remoteItemValue, existsItem[key])) {
             diffMeta[key] = remoteItemValue;
-          } else if (existsAbbreviatedItem && remoteItemDiffValue !== JSON.stringify(existsAbbreviatedItem[key])) {
+          } else if (!ignoreInAbbreviated.includes(key) && existsAbbreviatedItem && !isEqual(remoteItemValue, (existsAbbreviatedItem as Record<string, unknown>)[key])) {
             // should diff exists abbreviated item too
-            if (!diffMeta) diffMeta = {};
             diffMeta[key] = remoteItemValue;
           }
         }
         // should delete readme
         if (shouldDeleteReadme) {
-          if (!diffMeta) diffMeta = {};
           diffMeta.readme = undefined;
         }
-        if (diffMeta) {
+        if (!isEmpty(diffMeta)) {
           differentMetas.push([ existsItem, diffMeta ]);
         }
         continue;
       }
       syncIndex++;
-      const description: string = item.description;
+      const description = item.description;
       // "dist": {
       //   "shasum": "943e0ec03df00ebeb6273a5b94b916ba54b47581",
       //   "tarball": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz"
       // },
       const dist = item.dist;
-      const tarball: string = dist && dist.tarball;
+      const tarball = dist && dist.tarball;
       if (!tarball) {
         lastErrorMessage = `missing tarball, dist: ${JSON.stringify(dist)}`;
         logs.push(`[${isoNow()}] ❌ [${syncIndex}] Synced version ${version} fail, ${lastErrorMessage}`);
@@ -663,7 +661,11 @@ export class PackageSyncerService extends AbstractService {
         localFile = tmpfile;
         logs.push(`[${isoNow()}] 🚧 [${syncIndex}] HTTP content-length: ${headers['content-length']}, timing: ${JSON.stringify(timing)} => ${localFile}`);
       } catch (err: any) {
-        this.logger.error('Download tarball %s error: %s', tarball, err);
+        if (err.name === 'DownloadNotFoundError' || err.name === 'DownloadStatusInvalidError') {
+          this.logger.warn('Download tarball %s error: %s', tarball, err);
+        } else {
+          this.logger.error('Download tarball %s error: %s', tarball, err);
+        }
         lastErrorMessage = `download tarball error: ${err}`;
         logs.push(`[${isoNow()}] ❌ [${syncIndex}] Synced version ${version} fail, ${lastErrorMessage}`);
         await this.taskService.appendTaskLog(task, logs.join('\n'));
@@ -691,9 +693,10 @@ export class PackageSyncerService extends AbstractService {
       };
       try {
         // 当 version 记录已经存在时，还需要校验一下 pkg.manifests 是否存在
-        const pkgVersion = await this.packageManagerService.publish(publishCmd, users[0]);
+        const publisher = users.find(user => user.displayName === item._npmUser?.name) || users[0];
+        const pkgVersion = await this.packageManagerService.publish(publishCmd, publisher);
         updateVersions.push(pkgVersion.version);
-        logs.push(`[${isoNow()}] 🟢 [${syncIndex}] Synced version ${version} success, packageVersionId: ${pkgVersion.packageVersionId}, db id: ${pkgVersion.id}`);
+        logs.push(`[${isoNow()}] 🎉 [${syncIndex}] Synced version ${version} success, packageVersionId: ${pkgVersion.packageVersionId}, db id: ${pkgVersion.id}`);
       } catch (err: any) {
         if (err.name === 'ForbiddenError') {
           logs.push(`[${isoNow()}] 🐛 [${syncIndex}] Synced version ${version} already exists, skip publish, try to set in local manifest`);
@@ -877,7 +880,6 @@ export class PackageSyncerService extends AbstractService {
         authorId: task.authorId,
         authorIp: task.authorIp,
         tips,
-        remoteAuthToken,
       });
       logs.push(`[${isoNow()}] 📦 Add dependency "${dependencyName}" sync task: ${dependencyTask.taskId}, db id: ${dependencyTask.id}`);
     }
@@ -888,9 +890,9 @@ export class PackageSyncerService extends AbstractService {
 
     // clean cache
     await this.cacheService.removeCache(fullname);
-    logs.push(`[${isoNow()}] 🟢 Clean cache`);
-    logs.push(`[${isoNow()}] 🟢 log: ${logUrl}`);
-    logs.push(`[${isoNow()}] 🟢🟢🟢🟢🟢 ${url} 🟢🟢🟢🟢🟢`);
+    logs.push(`[${isoNow()}] 🗑️ Clean cache`);
+    logs.push(`[${isoNow()}] 📝 Log URL: ${logUrl}`);
+    logs.push(`[${isoNow()}] 🔗 ${url}`);
     task.error = lastErrorMessage;
     await this.taskService.finishTask(task, TaskState.Success, logs.join('\n'));
     this.logger.info('[PackageSyncerService.executeTask:success] taskId: %s, targetName: %s',

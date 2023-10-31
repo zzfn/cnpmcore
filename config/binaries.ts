@@ -871,6 +871,23 @@ const binaries = {
       },
     },
   },
+  'libpg-query-node': {
+    category: 'libpg-query-node',
+    description: 'libpg-query is a real PostgreSQL query parser',
+    type: BinaryType.NodePreGyp,
+    repo: 'pyramation/libpg-query-node',
+    distUrl: 'https://supabase-public-artifacts-bucket.s3.amazonaws.com',
+    options: {
+      npmPackageName: 'libpg-query',
+    },
+  },
+  'fuse-t': {
+    category: 'fuse-t',
+    description: 'FUSE-T is a kext-less implementation of FUSE for macOS that uses NFS v4 local server instead of a kernel extension.',
+    type: BinaryType.GitHub,
+    repo: 'macos-fuse-t/fuse-t',
+    distUrl: 'https://github.com/macos-fuse-t/fuse-t/releases',
+  },
 } as const;
 
 export type BinaryName = keyof typeof binaries;

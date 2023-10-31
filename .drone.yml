@@ -30,7 +30,9 @@ steps:
       password:
         from_secret: nexus_docker_password
       repo: hub.ccw.es/home/cnpmcore
-      tags: ${DRONE_COMMIT=latest}${DRONE_BUILD_NUMBER}
+      tags: 
+        - ${DRONE_COMMIT_SHA:0:8}
+        - latest
   - name: ssh
     image: appleboy/drone-ssh
     settings:
@@ -45,4 +47,4 @@ steps:
       script:
         - echo ${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
         - kubectl apply -f https://git.ccw.es/ccw/yaml/raw/branch/master/cnpmcore.yaml
-        - kubectl set image deployment/cnpmcore cnpmcore=hub.ccw.es/home/cnpmcore:${DRONE_COMMIT}${DRONE_BUILD_NUMBER}
+        - kubectl set image deployment/cnpmcore cnpmcore=hub.ccw.es/home/cnpmcore:${DRONE_COMMIT_SHA:0:8}

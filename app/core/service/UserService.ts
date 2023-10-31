@@ -106,19 +106,23 @@ export class UserService extends AbstractService {
     return { code: LoginResultCode.Success, user, token };
   }
 
-  async ensureTokenByUser({ name, email, password = crypto.randomUUID(), ip }: Optional<CreateUser, 'password'>) {
+  async findOrCreateUser({ name, email, ip, password = crypto.randomUUID() }: Optional<CreateUser, 'password'>) {
     let user = await this.userRepository.findUserByName(name);
     if (!user) {
       const createRes = await this.create({
         name,
         email,
-        // Authentication via sso
-        // should use token instead of password
         password,
         ip,
       });
       user = createRes.user;
     }
+
+    return user;
+  }
+
+  async ensureTokenByUser(opts: Optional<CreateUser, 'password'>) {
+    const user = await this.findOrCreateUser(opts);
     const token = await this.createToken(user.userId);
     return { user, token };
   }
@@ -199,14 +203,14 @@ export class UserService extends AbstractService {
     await this.userRepository.removeToken(token.tokenId);
   }
 
-  async findWebauthnCredential(userId: string, browserType?: string) {
+  async findWebauthnCredential(userId: string, browserType: string | undefined | null) {
     const credential = await this.userRepository.findCredentialByUserIdAndBrowserType(userId, browserType || null);
     return credential;
   }
 
-  async createWebauthnCredential(userId: string, options: CreateWebauthnCredentialOptions) {
+  async createWebauthnCredential(userId: string | undefined, options: CreateWebauthnCredentialOptions) {
     const credentialEntity = WebauthnCredentialEntity.create({
-      userId,
+      userId: userId as string,
       credentialId: options.credentialId,
       publicKey: options.publicKey,
       browserType: options.browserType,
@@ -215,7 +219,7 @@ export class UserService extends AbstractService {
     return credentialEntity;
   }
 
-  async removeWebauthnCredential(userId: string, browserType?: string) {
+  async removeWebauthnCredential(userId?: string, browserType?: string) {
     const credential = await this.userRepository.findCredentialByUserIdAndBrowserType(userId, browserType || null);
     if (credential) {
       await this.userRepository.removeCredential(credential.wancId);

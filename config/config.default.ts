@@ -4,7 +4,7 @@ import { join } from 'path';
 import { EggAppConfig, PowerPartial } from 'egg';
 import OSSClient from 'oss-cnpm';
 import { patchAjv } from '../app/port/typebox';
-import { ChangesStreamMode, SyncDeleteMode, SyncMode } from '../app/common/constants';
+import { ChangesStreamMode, NOT_IMPLEMENTED_PATH, SyncDeleteMode, SyncMode } from '../app/common/constants';
 import { CnpmcoreConfig } from '../app/port/config';
 
 export const cnpmcoreConfig: CnpmcoreConfig = {
@@ -52,6 +52,8 @@ export const cnpmcoreConfig: CnpmcoreConfig = {
   redirectNotFound: true,
   enableUnpkg: true,
   strictSyncSpecivicVersion: false,
+  enableElasticsearch: !!process.env.CNPMCORE_CONFIG_ENABLE_ES,
+  elasticsearchIndex: 'cnpmcore_packages',
   strictValidateTarballPkg: false,
 };
 
@@ -165,6 +167,8 @@ export default (appInfo: EggAppConfig) => {
     strict: false,
     // set default limit to 10mb, see https://github.com/npm/npm/issues/12750
     jsonLimit: '10mb',
+    // https://github.com/cnpm/cnpmcore/issues/551
+    ignore: NOT_IMPLEMENTED_PATH,
   };
 
   // https://github.com/xiekw2010/egg-typebox-validate#%E5%A6%82%E4%BD%95%E5%86%99%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%A1%E9%AA%8C%E8%A7%84%E5%88%99
@@ -184,6 +188,19 @@ export default (appInfo: EggAppConfig) => {
       file: 'sql.log',
     },
   };
+
+  // more options: https://www.elastic.co/guide/en/elasticsearch/client/javascript-api/current/configuration.html
+  if (config.cnpmcore.enableElasticsearch) {
+    config.elasticsearch = {
+      client: {
+        node: process.env.CNPMCORE_CONFIG_ES_CLIENT_NODE,
+        auth: {
+          username: process.env.CNPMCORE_CONFIG_ES_CLIENT_AUTH_USERNAME as string,
+          password: process.env.CNPMCORE_CONFIG_ES_CLIENT_AUTH_PASSWORD as string,
+        },
+      },
+    };
+  }
 
   return config;
 };

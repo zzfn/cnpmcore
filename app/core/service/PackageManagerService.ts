@@ -53,7 +53,7 @@ export interface PublishPackageCmd {
   // name don't include scope
   name: string;
   version: string;
-  description: string;
+  description?: string;
   packageJson: PackageJSONType;
   registryId?: string;
   readme: string;
@@ -64,7 +64,7 @@ export interface PublishPackageCmd {
     // sync worker will use localFile field
     localFile?: string;
   }, 'content' | 'localFile'>;
-  tag?: string;
+  tags?: string[];
   isPrivate: boolean;
   // only use on sync package
   publishTime?: Date;
@@ -107,14 +107,14 @@ export class PackageManagerService extends AbstractService {
         scope: cmd.scope,
         name: cmd.name,
         isPrivate: cmd.isPrivate,
-        description: cmd.description,
+        description: cmd.description || '',
         registryId: cmd.registryId,
       });
     } else {
       // update description
       // will read database twice to update description by model to entity and entity to model
       if (pkg.description !== cmd.description) {
-        pkg.description = cmd.description;
+        pkg.description = cmd.description || '';
       }
 
       /* c8 ignore next 3 */
@@ -270,10 +270,15 @@ export class PackageManagerService extends AbstractService {
     if (cmd.skipRefreshPackageManifests !== true) {
       await this.refreshPackageChangeVersionsToDists(pkg, [ pkgVersion.version ]);
     }
-    if (cmd.tag) {
-      await this.savePackageTag(pkg, cmd.tag, cmd.version, true);
+    if (cmd.tags) {
+      for (const tag of cmd.tags) {
+        await this.savePackageTag(pkg, tag, cmd.version, true);
+        this.eventBus.emit(PACKAGE_VERSION_ADDED, pkg.fullname, pkgVersion.version, tag);
+      }
+    } else {
+      this.eventBus.emit(PACKAGE_VERSION_ADDED, pkg.fullname, pkgVersion.version, undefined);
     }
-    this.eventBus.emit(PACKAGE_VERSION_ADDED, pkg.fullname, pkgVersion.version, cmd.tag);
+
     return pkgVersion;
   }
 
@@ -425,7 +430,7 @@ export class PackageManagerService extends AbstractService {
 
   public plusPackageVersionCounter(fullname: string, version: string) {
     // set counter + 1, schedule will store them into database
-    const counters = PackageManagerService.downloadCounters;
+    const counters: Record<string, Record<string, number>> = PackageManagerService.downloadCounters;
     if (!counters[fullname]) counters[fullname] = {};
     counters[fullname][version] = (counters[fullname][version] || 0) + 1;
     // Total
@@ -444,7 +449,7 @@ export class PackageManagerService extends AbstractService {
   // will be call by schedule/SavePackageVersionDownloadCounter.ts
   async savePackageVersionCounters() {
     // { [fullname]: { [version]: number } }
-    const counters = PackageManagerService.downloadCounters;
+    const counters: Record<string, Record<string, number>> = PackageManagerService.downloadCounters;
     const fullnames = Object.keys(counters);
     if (fullnames.length === 0) return;
 
@@ -724,12 +729,15 @@ export class PackageManagerService extends AbstractService {
     const fieldsFromLatestManifest = [
       'author', 'bugs', 'contributors', 'description', 'homepage', 'keywords', 'license',
       'readmeFilename', 'repository',
-    ];
+    ] as const;
     // the latest version metas
     for (const field of fieldsFromLatestManifest) {
-      fullManifests[field] = latestManifest[field];
+      if (latestManifest[field]) {
+        (fullManifests as Record<string, unknown>)[field] = latestManifest[field];
+      }
     }
   }
+
 
   private async _setPackageDistTagsAndLatestInfos(pkg: Package, fullManifests: PackageManifestType, abbreviatedManifests: AbbreviatedPackageManifestType) {
     const distTags = await this._listPackageDistTags(pkg);

@@ -3,6 +3,7 @@ import { isEqual } from 'lodash';
 import {
   UnprocessableEntityError,
   ForbiddenError,
+  ConflictError,
 } from 'egg-errors';
 import {
   HTTPController,
@@ -20,6 +21,7 @@ import { Static, Type } from '@sinclair/typebox';
 import { AbstractController } from '../AbstractController';
 import { getScopeAndName, FULLNAME_REG_STRING, extractPackageJSON } from '../../../common/PackageUtil';
 import { PackageManagerService } from '../../../core/service/PackageManagerService';
+import { PackageVersion as PackageVersionEntity } from '../../../core/entity/PackageVersion';
 import {
   VersionRule,
   TagWithVersionRule,
@@ -28,6 +30,7 @@ import {
 } from '../../typebox';
 import { RegistryManagerService } from '../../../core/service/RegistryManagerService';
 import { PackageJSONType } from '../../../repository/PackageRepository';
+import { CacheAdapter } from '../../../common/adapter/CacheAdapter';
 
 const STRICT_CHECK_TARBALL_FIELDS: (keyof PackageJson)[] = [ 'name', 'version', 'scripts', 'dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'license', 'licenses', 'bin' ];
 
@@ -74,6 +77,9 @@ export class SavePackageVersionController extends AbstractController {
   @Inject()
   private readonly registryManagerService: RegistryManagerService;
 
+  @Inject()
+  private readonly cacheAdapter: CacheAdapter;
+
   // https://github.com/cnpm/cnpmjs.org/blob/master/docs/registry-api.md#publish-a-new-package
   // https://github.com/npm/libnpmpublish/blob/main/publish.js#L43
   @HTTPMethod({
@@ -98,7 +104,7 @@ export class SavePackageVersionController extends AbstractController {
       const [ scope, name ] = getScopeAndName(fullname);
       const pkg = await this.packageRepository.findPackage(scope, name);
       if (!pkg) {
-        const errors = (validateResult.errors || validateResult.warnings).join(', ');
+        const errors = (validateResult.errors || validateResult.warnings || []).join(', ');
         throw new UnprocessableEntityError(`package.name invalid, errors: ${errors}`);
       }
     }
@@ -132,11 +138,25 @@ export class SavePackageVersionController extends AbstractController {
 
     const attachment = attachments[attachmentFilename];
     const distTags = pkg['dist-tags'] ?? {};
-    const tagName = Object.keys(distTags)[0];
-    if (!tagName) {
+    let tagNames = Object.keys(distTags);
+    if (tagNames.length === 0) {
       throw new UnprocessableEntityError('dist-tags is empty');
     }
-    const tagWithVersion = { tag: tagName, version: distTags[tagName] };
+
+    const [ scope, name ] = getScopeAndName(fullname);
+    // see @https://github.com/cnpm/cnpmcore/issues/574
+    // add default latest tag
+    if (!pkg['dist-tags']!.latest) {
+      const existsPkg = await this.packageRepository.findPackage(scope, name);
+      const existsLatestTag = existsPkg && await this.packageRepository.findPackageTag(existsPkg?.packageId, 'latest');
+      if (!existsPkg || !existsLatestTag) {
+        this.logger.warn('[package:version:add] add default latest tag');
+        pkg['dist-tags']!.latest = pkg['dist-tags']![tagNames[0]];
+        tagNames = [ ...tagNames, 'latest' ];
+      }
+    }
+
+    const tagWithVersion = { tag: tagNames[0], version: distTags[tagNames[0]] };
     ctx.tValidate(TagWithVersionRule, tagWithVersion);
     if (tagWithVersion.version !== packageVersion.version) {
       throw new UnprocessableEntityError(`dist-tags version "${tagWithVersion.version}" not match package version "${packageVersion.version}"`);
@@ -180,14 +200,14 @@ export class SavePackageVersionController extends AbstractController {
       const tarballPkg = await extractPackageJSON(tarballBytes);
       const versionManifest = pkg.versions[tarballPkg.version];
       const diffKeys = STRICT_CHECK_TARBALL_FIELDS.filter(key => {
-        return !isEqual(tarballPkg[key], versionManifest[key]);
+        const targetKey = key as unknown as keyof typeof versionManifest;
+        return !isEqual(tarballPkg[key], versionManifest[targetKey]);
       });
       if (diffKeys.length > 0) {
         throw new UnprocessableEntityError(`${diffKeys} mismatch between tarball and manifest`);
       }
     }
 
-    const [ scope, name ] = getScopeAndName(fullname);
 
     // make sure readme is string
     const readme = typeof packageVersion.readme === 'string' ? packageVersion.readme : '';
@@ -199,28 +219,38 @@ export class SavePackageVersionController extends AbstractController {
     }
 
     const registry = await this.registryManagerService.ensureSelfRegistry();
-    const packageVersionEntity = await this.packageManagerService.publish({
-      scope,
-      name,
-      version: packageVersion.version,
-      description: packageVersion.description,
-      packageJson: packageVersion as PackageJSONType,
-      readme,
-      dist: {
-        content: tarballBytes,
-      },
-      tag: tagWithVersion.tag,
-      registryId: registry.registryId,
-      isPrivate: true,
-    }, user);
+
+    let packageVersionEntity: PackageVersionEntity | undefined;
+    const lockRes = await this.cacheAdapter.usingLock(`${pkg.name}:publish`, 60, async () => {
+      packageVersionEntity = await this.packageManagerService.publish({
+        scope,
+        name,
+        version: packageVersion.version,
+        description: packageVersion.description as string,
+        packageJson: packageVersion as PackageJSONType,
+        readme,
+        dist: {
+          content: tarballBytes,
+        },
+        tags: tagNames,
+        registryId: registry.registryId,
+        isPrivate: true,
+      }, user);
+    });
+
+    // lock fail
+    if (!lockRes) {
+      this.logger.warn('[package:version:add] check lock fail');
+      throw new ConflictError('Unable to create the publication lock, please try again later.');
+    }
 
     this.logger.info('[package:version:add] %s@%s, packageVersionId: %s, tag: %s, userId: %s',
-      packageVersion.name, packageVersion.version, packageVersionEntity.packageVersionId,
-      tagWithVersion.tag, user.userId);
+      packageVersion.name, packageVersion.version, packageVersionEntity?.packageVersionId,
+      tagWithVersion.tag, user?.userId);
     ctx.status = 201;
     return {
       ok: true,
-      rev: `${packageVersionEntity.id}-${packageVersionEntity.packageVersionId}`,
+      rev: `${packageVersionEntity?.id}-${packageVersionEntity?.packageVersionId}`,
     };
   }
 

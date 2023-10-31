@@ -17,6 +17,7 @@ import type { Maintainer as MaintainerModel } from './model/Maintainer';
 import type { User as UserModel } from './model/User';
 import { User as UserEntity } from '../core/entity/User';
 import { AbstractRepository } from './AbstractRepository';
+import { BugVersionPackages } from '../core/entity/BugVersion';
 
 export type PackageManifestType = Pick<PackageJSONType, PackageJSONPickKey> & {
   _id: string;
@@ -50,7 +51,7 @@ export type PackageJSONType = CnpmcorePatchInfo & {
     url?: string;
     email?: string;
   };
-  license?: string;
+  license?: LicenseType | string;
   author?: AuthorType | string;
   contributors?: ContributorType[] | string[];
   maintainers?: ContributorType[] | string[];
@@ -63,7 +64,9 @@ export type PackageJSONType = CnpmcorePatchInfo & {
   directories?: DirectoriesType;
   repository?: RepositoryType;
   scripts?: Record<string, string>;
-  config?: Record<string, unknown>;
+  config?: {
+    'bug-versions'?: BugVersionPackages;
+  };
   dependencies?: DepInfo;
   devDependencies?: DepInfo;
   peerDependencies?: DepInfo;
@@ -95,12 +98,16 @@ export type PackageJSONType = CnpmcorePatchInfo & {
   hasInstallScript?: boolean;
   dist?: DistType;
   workspace?: string[];
+  _npmUser?: {
+    name: string;
+    email: string;
+  };
   [key: string]: unknown;
 };
 
-type PackageJSONPickKey = 'name' | 'author' | 'bugs' | 'description' | 'homepage' | 'keywords' | 'license' | 'readme' | 'readmeFilename' | 'repository' | 'versions';
+type PackageJSONPickKey = 'name' | 'author' | 'bugs' | 'description' | 'homepage' | 'keywords' | 'license' | 'readme' | 'readmeFilename' | 'repository' | 'versions' | 'contributors';
 
-type CnpmcorePatchInfo = {
+export type CnpmcorePatchInfo = {
   _cnpmcore_publish_time?: Date;
   publish_time?: number;
   _source_registry_name?: string;
@@ -117,10 +124,16 @@ type DistType = {
   [key: string]: unknown,
 };
 
-type AuthorType = {
+export type AuthorType = {
   name: string;
+  username?: string;
   email?: string;
   url?: string;
+};
+
+type LicenseType = {
+  type: string;
+  url: string;
 };
 
 type ContributorType = {

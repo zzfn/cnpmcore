@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { setTimeout } from 'node:timers/promises';
 import { app, mock } from 'egg-mock/bootstrap';
 import { TestUtil } from '../../../../test/TestUtil';
 import { UserRepository } from '../../../../app/repository/UserRepository';
@@ -11,6 +12,7 @@ import { Token as TokenModel } from '../../../../app/repository/model/Token';
 import { User } from '../../../../app/core/entity/User';
 import dayjs from 'dayjs';
 import { PackageManagerService } from '../../../../app/core/service/PackageManagerService';
+import { ForbiddenError } from 'egg-errors';
 
 describe('test/port/controller/package/SavePackageVersionController.test.ts', () => {
   let userRepository: UserRepository;
@@ -86,6 +88,47 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
       assert(pkgEntity);
       assert.equal(pkgEntity.registryId, selfRegistry.registryId);
     });
+
+    it('should 409 when lock failed', async () => {
+      const { pkg, user } = await TestUtil.createPackage({ name: '@cnpm/banana', version: '1.0.0' });
+
+      const packageManagerService = await app.getEggObject(PackageManagerService);
+
+      mock(packageManagerService, 'publish', async () => {
+        await setTimeout(50);
+        throw new ForbiddenError('mock error');
+      });
+
+      const [ errorRes, conflictRes ] = await Promise.all([
+        app.httpRequest()
+          .put(`/${pkg.name}`)
+          .set('authorization', user.authorization)
+          .set('user-agent', user.ua)
+          .send(pkg),
+        (async () => {
+          await setTimeout(10);
+          return app.httpRequest()
+            .put(`/${pkg.name}`)
+            .set('authorization', user.authorization)
+            .set('user-agent', user.ua)
+            .send(pkg);
+        })(),
+      ]);
+      assert(errorRes.error, '[FORBIDDEN] mock error');
+      assert.equal(conflictRes.status, 409);
+      assert(conflictRes.error, '[CONFLICT] Unable to create the publication lock, please try again later.');
+
+      // release lock
+      await setTimeout(50);
+      const nextErrorRes = await app.httpRequest()
+        .put(`/${pkg.name}`)
+        .set('authorization', user.authorization)
+        .set('user-agent', user.ua)
+        .send(pkg);
+      assert(nextErrorRes.error, '[FORBIDDEN] mock error');
+
+    });
+
     it('should verify tgz and manifest', async () => {
       const { pkg, user } = await TestUtil.createPackage({ name: '@cnpm/banana', version: '1.0.0' });
       const pkg2 = await TestUtil.getFullPackage({ name: pkg.name, version: '0.0.1' });
@@ -770,7 +813,7 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
         dist: {
           content: Buffer.from('', 'base64'),
         },
-        tag: 'latest',
+        tags: [ 'latest' ],
         isPrivate: true,
       }, user!);
 
@@ -1171,6 +1214,34 @@ describe('test/port/controller/package/SavePackageVersionController.test.ts', ()
           .send(pkg);
 
         assert.equal(res.status, 201);
+      });
+
+      it('should 200 add default latest tag', async () => {
+        const name = '@cnpm/default_latest_tag';
+        token = await userService.createToken(user!.userId, {
+          name: 'new-token',
+          type: TokenType.granular,
+          allowedPackages: [ name ],
+          expires: 1,
+        });
+
+        const pkg = await TestUtil.getFullPackage({ name, version: '3.0.0' });
+        pkg['dist-tags'] = {
+          beta: '3.0.0',
+        };
+        const res = await app.httpRequest()
+          .put(`/${name}`)
+          .set('authorization', `Bearer ${token.token}`)
+          .set('user-agent', publisher.ua)
+          .send(pkg);
+
+        assert.equal(res.status, 201);
+
+        const queryRes = await app.httpRequest()
+          .get(`/${name}/latest`);
+
+        assert.equal(queryRes.body.version, '3.0.0');
+
       });
     });
   });

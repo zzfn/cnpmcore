@@ -3,7 +3,7 @@ import { RegistryType } from '../common/enum/Registry';
 import semver from 'semver';
 import npa from 'npm-package-arg';
 import { HookType } from '../common/enum/Hook';
-import binaryConfig from '../../config/binaries';
+import binaryConfig, { BinaryName } from '../../config/binaries';
 
 export const Name = Type.String({
   transform: [ 'trim' ],
@@ -79,12 +79,6 @@ export const TagWithVersionRule = Type.Object({
 
 export const SyncPackageTaskRule = Type.Object({
   fullname: Name,
-  remoteAuthToken: Type.Optional(
-    Type.String({
-      transform: [ 'trim' ],
-      maxLength: 200,
-    }),
-  ),
   tips: Type.String({
     transform: [ 'trim' ],
     maxLength: 1024,
@@ -151,8 +145,8 @@ export function patchAjv(ajv: any) {
   });
   ajv.addFormat('binary-name', {
     type: 'string',
-    validate: (binaryName: string) => {
-      return !!binaryConfig[binaryName];
+    validate: (binaryName: BinaryName) => {
+      return binaryConfig[binaryName];
     },
   });
   ajv.addFormat('semver-version-array', {
@@ -210,35 +204,44 @@ export const RegistryCreateOptions = Type.Object({
     maxLength: 256,
   })),
   type: Type.Enum(RegistryType),
+  authToken: Type.Optional(
+    Type.String({
+      transform: [ 'trim' ],
+      maxLength: 256,
+    }),
+  ),
 });
 
 export const RegistryUpdateOptions = Type.Object({
-  name: Type.String({
-    transform: [ 'trim' ],
-    minLength: 1,
-    maxLength: 256,
-  }),
-  host: Type.String({
-    transform: [ 'trim' ],
-    minLength: 1,
-    maxLength: 4096,
-  }),
-  changeStream: Type.String({
-    transform: [ 'trim' ],
-    minLength: 1,
-    maxLength: 4096,
-  }),
-  userPrefix: Type.Optional(Type.String({
-    transform: [ 'trim' ],
-    minLength: 1,
-    maxLength: 256,
-  })),
-  type: Type.Enum(RegistryType),
-  registryId: Type.String({
-    transform: [ 'trim' ],
-    minLength: 1,
-    maxLength: 256,
-  }),
+  name: Type.Optional(
+    Type.String({
+      transform: [ 'trim' ],
+      minLength: 1,
+      maxLength: 256,
+    }),
+  ),
+  host: Type.Optional(
+    Type.String({
+      transform: [ 'trim' ],
+      minLength: 1,
+      maxLength: 4096,
+    }),
+  ),
+  changeStream: Type.Optional(
+    Type.String({
+      transform: [ 'trim' ],
+      minLength: 1,
+      maxLength: 4096,
+    }),
+  ),
+  type: Type.Optional(Type.Enum(RegistryType)),
+  authToken: Type.Optional(
+    Type.String({
+      transform: [ 'trim' ],
+      minLength: 1,
+      maxLength: 256,
+    }),
+  ),
 });
 
 export const ScopeCreateOptions = Type.Object({
@@ -266,6 +269,24 @@ export const ScopeUpdateOptions = Type.Object({
     maxLength: 256,
   }),
   scopeId: Type.String({
+    transform: [ 'trim' ],
+    minLength: 1,
+    maxLength: 256,
+  }),
+});
+
+export const SearchQueryOptions = Type.Object({
+  from: Type.Number({
+    transform: [ 'trim' ],
+    minimum: 0,
+    default: 0,
+  }),
+  size: Type.Number({
+    transform: [ 'trim' ],
+    minimum: 1,
+    default: 20,
+  }),
+  text: Type.String({
     transform: [ 'trim' ],
     minLength: 1,
     maxLength: 256,
