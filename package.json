@@ -1,6 +1,6 @@
 {
   "name": "cnpmcore",
-  "version": "3.47.2",
+  "version": "3.49.3",
   "description": "npm core",
   "files": [
     "dist/**/*"
@@ -78,6 +78,7 @@
     "@eggjs/tegg-schedule-plugin": "^3.12.0",
     "@eggjs/tsconfig": "^1.0.0",
     "@elastic/elasticsearch": "^8.8.1",
+    "@fengmk2/tar": "^6.2.0",
     "@node-rs/crc32": "^1.2.2",
     "@simplewebauthn/server": "^7.0.1",
     "@sinclair/typebox": "^0.23.0",
@@ -86,7 +87,7 @@
     "bson-objectid": "^2.0.1",
     "dayjs": "^1.10.7",
     "egg": "^3.9.2",
-    "egg-cors": "^2.2.3",
+    "egg-cors": "^3.0.0",
     "egg-errors": "^2.3.0",
     "egg-redis": "^2.4.0",
     "egg-scripts": "^2.15.2",
@@ -97,7 +98,7 @@
     "eggjs-elasticsearch": "^0.0.6",
     "fs-cnpm": "^2.4.0",
     "ioredis": "^5.3.1",
-    "leoric": "^2.6.2",
+    "leoric": "^2.11.5",
     "lodash": "^4.17.21",
     "mime-types": "^2.1.35",
     "mysql": "^2.18.1",
@@ -108,7 +109,6 @@
     "s3-cnpmcore": "^1.1.2",
     "semver": "^7.3.5",
     "ssri": "^8.0.1",
-    "tar": "^6.1.13",
     "type-fest": "^2.5.3",
     "ua-parser-js": "^1.0.34",
     "validate-npm-package-name": "^3.0.0"
@@ -135,7 +135,7 @@
     "eslint": "^8.29.0",
     "eslint-config-egg": "^13.0.0",
     "git-contributor": "2",
-    "typescript": "^5.2.2"
+    "typescript": "5.2.2"
   },
   "author": "killagu",
   "license": "MIT",

@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { app, mock } from 'egg-mock/bootstrap';
+import { errors } from '@elastic/elasticsearch';
 
 import { mockES } from '../../../../config/config.unittest';
 import { TestUtil } from '../../../TestUtil';
@@ -53,6 +54,33 @@ describe('test/port/controller/package/SearchPackageController.test.ts', () => {
       assert.equal(res.body.total, 1);
     });
 
+    it('should get example package when search text is empty', async () => {
+      mockES.add({
+        method: 'POST',
+        path: `/${app.config.cnpmcore.elasticsearchIndex}/_search`,
+      }, () => {
+        return {
+          hits: {
+            total: { value: 1, relation: 'eq' },
+            hits: [{
+              _source: {
+                downloads: {
+                  all: 0,
+                },
+                package: {
+                  name: 'example',
+                  description: 'example package',
+                },
+              },
+            }],
+          },
+        };
+      });
+      const res = await app.httpRequest()
+        .get('/-/v1/search?from=0&size=1');
+      assert.equal(res.body.objects[0].package.name, 'example');
+      assert.equal(res.body.total, 1);
+    });
   });
 
   describe('[PUT /-/v1/search/sync/:fullname] sync()', async () => {
@@ -113,6 +141,43 @@ describe('test/port/controller/package/SearchPackageController.test.ts', () => {
         return {
           _id: name,
         };
+      });
+      mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
+      mock(app.config.cnpmcore, 'enableElasticsearch', true);
+      mock(app.config.cnpmcore, 'registry', 'https://registry.example.com');
+
+      const res = await app.httpRequest()
+        .delete(`/-/v1/search/sync/${name}`)
+        .set('authorization', admin.authorization);
+      assert.equal(res.body.package, name);
+    });
+
+    it('should delete a non existent package', async () => {
+      const name = 'non-existent-search-package';
+      mockES.add({
+        method: 'DELETE',
+        path: `/${app.config.cnpmcore.elasticsearchIndex}/_doc/:id`,
+      }, () => {
+        return new errors.ResponseError({
+          body: { errors: {}, status: 404 },
+          statusCode: 404,
+          warnings: null,
+          meta: {
+            name: '',
+            context: '',
+            request: {
+              params: {
+                method: 'delete',
+                path: `/${app.config.cnpmcore.elasticsearchIndex}/_doc/:id`,
+              },
+              options: {},
+              id: '',
+            },
+            connection: null,
+            attempts: 1,
+            aborted: true,
+          },
+        });
       });
       mock(app.config.cnpmcore, 'allowPublishNonScopePackage', true);
       mock(app.config.cnpmcore, 'enableElasticsearch', true);

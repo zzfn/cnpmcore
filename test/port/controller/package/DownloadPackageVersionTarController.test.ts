@@ -53,6 +53,23 @@ describe('test/port/controller/package/DownloadPackageVersionTarController.test.
       assert(res.headers.location === `https://cdn.mock.com/packages/${scopedName}/1.0.0/${name}-1.0.0.tgz`);
     });
 
+    it('should support cors OPTIONS Request', async () => {
+      mock(nfsClientAdapter, 'url', async (storeKey: string) => {
+        return `https://cdn.mock.com${storeKey}`;
+      });
+
+      let res = await app.httpRequest()
+        .options(`/${name}/-/testmodule-download-version-tar-1.0.0.tgz`);
+      assert.equal(res.status, 204);
+      assert.equal(res.headers['access-control-allow-origin'], '*');
+      assert.equal(res.headers['access-control-allow-methods'], 'GET,HEAD');
+      res = await app.httpRequest()
+        .options(`/${scopedName}/-/testmodule-download-version-tar-1.0.0.tgz`);
+      assert.equal(res.status, 204);
+      assert.equal(res.headers['access-control-allow-origin'], '*');
+      assert.equal(res.headers['access-control-allow-methods'], 'GET,HEAD');
+    });
+
     if (process.env.CNPMCORE_NFS_TYPE !== 'oss') {
       it('should download a version tar redirect to mock cdn success with url function is not async function', async () => {
         mock(nfsClientAdapter, 'url', (storeKey: string) => {
