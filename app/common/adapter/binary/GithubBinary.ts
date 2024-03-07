@@ -21,7 +21,11 @@ export class GithubBinary extends AbstractBinary {
       const maxPage = binaryConfig.options?.maxPage || 1;
       for (let i = 0; i < maxPage; i++) {
         const url = `https://api.github.com/repos/${binaryConfig.repo}/releases?per_page=100&page=${i + 1}`;
-        const data = await this.requestJSON(url);
+        const requestHeaders: Record<string, string> = {};
+        if (process.env.GITHUB_TOKEN) {
+          requestHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
+        }
+        const data = await this.requestJSON(url, requestHeaders);
         if (!Array.isArray(data)) {
           // {"message":"API rate limit exceeded for 47.57.239.54. (But here's the good news: Authenticated requests get a higher rate limit. Check out the documentation for more details.)","documentation_url":"https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}
           if (typeof data?.message === 'string' && data.message.includes('rate limit')) {
@@ -40,10 +44,13 @@ export class GithubBinary extends AbstractBinary {
 
   protected formatItems(releaseItem: any, binaryConfig: BinaryTaskConfig) {
     const items: BinaryItem[] = [];
-    // 200MB
-    const maxFileSize = 1024 * 1024 * 200;
+    // 250MB
+    const maxFileSize = 1024 * 1024 * 250;
     for (const asset of releaseItem.assets) {
-      if (asset.size > maxFileSize) continue;
+      if (asset.size > maxFileSize) {
+        this.logger.info('[GithubBinary.formatItems] asset reach max file size(> 250MB), ignore download it, asset: %j', asset);
+        continue;
+      }
       items.push({
         name: asset.name,
         isDir: false,

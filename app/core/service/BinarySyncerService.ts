@@ -19,7 +19,6 @@ import { Binary } from '../entity/Binary';
 import { TaskService } from './TaskService';
 import { AbstractBinary, BinaryItem } from '../../common/adapter/binary/AbstractBinary';
 import { AbstractService } from '../../common/AbstractService';
-import { TaskRepository } from '../../repository/TaskRepository';
 import { BinaryType } from '../../common/enum/Binary';
 import { sortBy } from 'lodash';
 
@@ -35,8 +34,6 @@ export class BinarySyncerService extends AbstractService {
   private readonly binaryRepository: BinaryRepository;
   @Inject()
   private readonly taskService: TaskService;
-  @Inject()
-  private readonly taskRepository: TaskRepository;
   @Inject()
   private readonly httpclient: EggHttpClient;
   @Inject()
@@ -89,13 +86,7 @@ export class BinarySyncerService extends AbstractService {
     return await this.nfsAdapter.getDownloadUrlOrStream(binary.storePath);
   }
 
-  // SyncBinary 由定时任务每台单机定时触发，手动去重
-  // 添加 bizId 在 db 防止重复，记录 id 错误
   public async createTask(binaryName: BinaryName, lastData?: any) {
-    const existsTask = await this.taskRepository.findTaskByTargetName(binaryName, TaskType.SyncBinary);
-    if (existsTask) {
-      return existsTask;
-    }
     try {
       return await this.taskService.createTask(Task.createSyncBinary(binaryName, lastData), false);
     } catch (e) {
@@ -136,12 +127,14 @@ export class BinarySyncerService extends AbstractService {
     this.logger.info('[BinarySyncerService.executeTask:start] taskId: %s, targetName: %s, log: %s',
       task.taskId, task.targetName, logUrl);
     try {
-      await this.syncDir(binaryAdapter, task, '/');
+      const [ hasDownloadError ] = await this.syncDir(binaryAdapter, task, '/');
       logs.push(`[${isoNow()}] 🟢 log: ${logUrl}`);
       logs.push(`[${isoNow()}] 🟢🟢🟢🟢🟢 "${binaryName}" 🟢🟢🟢🟢🟢`);
       await this.taskService.finishTask(task, TaskState.Success, logs.join('\n'));
-      this.logger.info('[BinarySyncerService.executeTask:success] taskId: %s, targetName: %s, log: %s',
-        task.taskId, task.targetName, logUrl);
+      // 确保没有下载异常才算 success
+      await binaryAdapter.finishFetch(!hasDownloadError, binaryName);
+      this.logger.info('[BinarySyncerService.executeTask:success] taskId: %s, targetName: %s, log: %s, hasDownloadError: %s',
+        task.taskId, task.targetName, logUrl, hasDownloadError);
     } catch (err: any) {
       task.error = err.message;
       logs.push(`[${isoNow()}] ❌ Synced "${binaryName}" fail, ${task.error}, log: ${logUrl}`);
@@ -157,6 +150,7 @@ export class BinarySyncerService extends AbstractService {
           task.taskId, task.targetName, task.error);
         this.logger.error(err);
       }
+      await binaryAdapter.finishFetch(false, binaryName);
       await this.taskService.finishTask(task, TaskState.Fail, logs.join('\n'));
     }
   }
@@ -238,7 +232,7 @@ export class BinarySyncerService extends AbstractService {
       if (hasDownloadError) {
         logs.push(`[${isoNow()}][${dir}] ❌ Synced dir fail`);
       } else {
-        logs.push(`[${isoNow()}][${dir}] 🟢 Synced dir success`);
+        logs.push(`[${isoNow()}][${dir}] 🟢 Synced dir success, hasItems: ${hasItems}`);
       }
       await this.taskService.appendTaskLog(task, logs.join('\n'));
     }

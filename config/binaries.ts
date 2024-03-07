@@ -888,6 +888,29 @@ const binaries = {
     repo: 'macos-fuse-t/fuse-t',
     distUrl: 'https://github.com/macos-fuse-t/fuse-t/releases',
   },
+  'ant-design-charts': {
+    category: 'ant-design-charts',
+    description: 'A React Chart Library https://ant-design-charts-next.antgroup.com/',
+    type: BinaryType.GitHub,
+    repo: 'ant-design/ant-design-charts',
+    distUrl: 'https://github.com/ant-design/ant-design-charts/releases',
+  },
+  'pkg-fetch': {
+    category: 'pkg-fetch',
+    description:
+      'pkg-fetch provides prebuilt node binaries used by pkg. yao-pkg/pkg-fetch is currently the most actively maintained fork of vercel/pkg-fetch.',
+    type: BinaryType.GitHub,
+    repo: 'yao-pkg/pkg-fetch',
+    distUrl: 'https://github.com/yao-pkg/pkg-fetch/releases',
+  },
+  bun: {
+    category: 'bun',
+    description:
+      'Incredibly fast JavaScript runtime, bundler, test runner, and package manager – all in one',
+    type: BinaryType.GitHub,
+    repo: 'oven-sh/bun',
+    distUrl: 'https://github.com/oven-sh/bun/releases',
+  },
 } as const;
 
 export type BinaryName = keyof typeof binaries;

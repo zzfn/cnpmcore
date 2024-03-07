@@ -31,6 +31,11 @@ export abstract class AbstractBinary {
   abstract initFetch(binaryName: BinaryName): Promise<void>;
   abstract fetch(dir: string, binaryName: BinaryName): Promise<FetchResult | undefined>;
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async finishFetch(_success: boolean, _binaryName: BinaryName): Promise<void> {
+    // do not thing by default
+  }
+
   protected async requestXml(url: string) {
     const { status, data, headers } = await this.httpclient.request(url, {
       timeout: 30000,
@@ -45,12 +50,13 @@ export abstract class AbstractBinary {
     return xml;
   }
 
-  protected async requestJSON(url: string) {
+  protected async requestJSON(url: string, requestHeaders?: Record<string, string>) {
     const { status, data, headers } = await this.httpclient.request(url, {
       timeout: 30000,
       dataType: 'json',
       followRedirect: true,
       gzip: true,
+      headers: requestHeaders,
     });
     if (status !== 200) {
       this.logger.warn('[AbstractBinary.requestJSON:non-200-status] url: %s, status: %s, headers: %j', url, status, headers);
