@@ -113,10 +113,10 @@ export default (appInfo: EggAppConfig) => {
   /* c8 ignore next 17 */
   // enable oss nfs store by env values
   if (process.env.CNPMCORE_NFS_TYPE === 'oss') {
-    assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
-    assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
-    assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
-    assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
+      assert(process.env.CNPMCORE_NFS_OSS_BUCKET, 'require env CNPMCORE_NFS_OSS_BUCKET');
+      assert(process.env.CNPMCORE_NFS_OSS_ENDPOINT, 'require env CNPMCORE_NFS_OSS_ENDPOINT');
+      assert(process.env.CNPMCORE_NFS_OSS_ID, 'require env CNPMCORE_NFS_OSS_ID');
+      assert(process.env.CNPMCORE_NFS_OSS_SECRET, 'require env CNPMCORE_NFS_OSS_SECRET');
     config.nfs.client = new OSSClient({
       cdnBaseUrl: process.env.CNPMCORE_NFS_OSS_CDN,
       endpoint: process.env.CNPMCORE_NFS_OSS_ENDPOINT,
