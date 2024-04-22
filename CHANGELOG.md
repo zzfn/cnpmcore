@@ -1,5 +1,38 @@
 # Changelog
 
+## [3.55.1](https://github.com/cnpm/cnpmcore/compare/v3.55.0...v3.55.1) (2024-04-17)
+
+
+### Bug Fixes
+
+* add logs fro aggregate errors ([#672](https://github.com/cnpm/cnpmcore/issues/672)) ([c0f96d7](https://github.com/cnpm/cnpmcore/commit/c0f96d72e5ca0a4171528e298daa146257e1c5dc))
+
+## [3.55.0](https://github.com/cnpm/cnpmcore/compare/v3.54.0...v3.55.0) (2024-04-15)
+
+
+### Features
+
+* use mysql2 ([#671](https://github.com/cnpm/cnpmcore/issues/671)) ([58d19b1](https://github.com/cnpm/cnpmcore/commit/58d19b17f037c5fc4684e04b18aee81aa102d07c))
+
+## [3.54.0](https://github.com/cnpm/cnpmcore/compare/v3.53.4...v3.54.0) (2024-04-13)
+
+
+### Features
+
+* use mysql2@^3.9.4 ([#669](https://github.com/cnpm/cnpmcore/issues/669)) ([468f9e4](https://github.com/cnpm/cnpmcore/commit/468f9e4e36717ffb984be38199988beaa5ef4bb4))
+
+
+### Bug Fixes
+
+* remove unuse mysql2 deps ([#670](https://github.com/cnpm/cnpmcore/issues/670)) ([c71d185](https://github.com/cnpm/cnpmcore/commit/c71d185ee1bb5149fed12701453daf2b4df3420f))
+
+## [3.53.4](https://github.com/cnpm/cnpmcore/compare/v3.53.3...v3.53.4) (2024-03-28)
+
+
+### Bug Fixes
+
+* sync cypress linux-arm64 binary ([#662](https://github.com/cnpm/cnpmcore/issues/662)) ([049b186](https://github.com/cnpm/cnpmcore/commit/049b186a0edd28744922e7e007d2813b352e7b18))
+
 ## [3.53.3](https://github.com/cnpm/cnpmcore/compare/v3.53.2...v3.53.3) (2024-02-23)
 
 
